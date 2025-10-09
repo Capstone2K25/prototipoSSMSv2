@@ -1,0 +1,145 @@
+import { TrendingUp, Package, AlertTriangle, RefreshCw } from 'lucide-react';
+import {
+  getTopRotationProducts,
+  getTotalStockByChannel,
+  getLowStockProducts,
+  mockAlerts
+} from '../data/mockData';
+
+export const Dashboard = () => {
+  const topProducts = getTopRotationProducts();
+  const stockByChannel = getTotalStockByChannel();
+  const lowStockProducts = getLowStockProducts();
+  const recentAlerts = mockAlerts.slice(0, 3);
+
+  const lastUpdate = new Date().toLocaleString('es-CL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold text-neutral-900">Dashboard</h2>
+        <div className="flex items-center space-x-2 text-sm text-neutral-600">
+          <RefreshCw size={16} />
+          <span>Última actualización: {lastUpdate}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">Stock Madre</h3>
+            <Package className="text-green-700" size={24} />
+          </div>
+          <p className="text-3xl font-bold text-neutral-900">{stockByChannel.madre}</p>
+          <p className="text-sm text-neutral-500 mt-2">unidades totales</p>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">Stock Web</h3>
+            <Package className="text-blue-600" size={24} />
+          </div>
+          <p className="text-3xl font-bold text-neutral-900">{stockByChannel.web}</p>
+          <p className="text-sm text-neutral-500 mt-2">unidades publicadas</p>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">Stock ML</h3>
+            <Package className="text-yellow-500" size={24} />
+          </div>
+          <p className="text-3xl font-bold text-neutral-900">{stockByChannel.ml}</p>
+          <p className="text-sm text-neutral-500 mt-2">unidades en Mercado Libre</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6">
+          <div className="flex items-center space-x-2 mb-6">
+            <TrendingUp className="text-green-700" size={24} />
+            <h3 className="text-lg font-bold text-neutral-900">Mayor Rotación</h3>
+          </div>
+          <div className="space-y-4">
+            {topProducts.map((product, index) => (
+              <div key={product.id} className="flex items-center space-x-4 pb-4 border-b border-neutral-100 last:border-0">
+                <div className="flex-shrink-0 w-8 h-8 bg-neutral-900 text-white rounded-full flex items-center justify-center font-bold text-sm">
+                  {index + 1}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-neutral-900 truncate">{product.name}</p>
+                  <p className="text-sm text-neutral-500">{product.sku}</p>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-green-700">{product.rotation}%</p>
+                    <p className="text-xs text-neutral-500">rotación</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6">
+          <div className="flex items-center space-x-2 mb-6">
+            <AlertTriangle className="text-red-600" size={24} />
+            <h3 className="text-lg font-bold text-neutral-900">Alertas de Stock Bajo</h3>
+          </div>
+          <div className="space-y-4">
+            {lowStockProducts.map(product => (
+              <div key={product.id} className="flex items-center space-x-4 pb-4 border-b border-neutral-100 last:border-0">
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-neutral-900 truncate">{product.name}</p>
+                  <p className="text-sm text-neutral-500">{product.sku}</p>
+                </div>
+                <div className="text-right">
+                  <p className={`text-lg font-bold ${product.stockMadre < 10 ? 'text-red-600' : 'text-orange-600'}`}>
+                    {product.stockMadre}
+                  </p>
+                  <p className="text-xs text-neutral-500">unidades</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6">
+        <h3 className="text-lg font-bold text-neutral-900 mb-6">Alertas Recientes</h3>
+        <div className="space-y-3">
+          {recentAlerts.map(alert => {
+            const typeStyles = {
+              'low-stock': 'bg-orange-50 border-orange-200 text-orange-800',
+              'error': 'bg-red-50 border-red-200 text-red-800',
+              'sync': 'bg-green-50 border-green-200 text-green-800',
+              'info': 'bg-blue-50 border-blue-200 text-blue-800'
+            };
+
+            return (
+              <div
+                key={alert.id}
+                className={`p-4 rounded-lg border ${typeStyles[alert.type]}`}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <p className="font-medium">{alert.message}</p>
+                    {alert.channel && (
+                      <p className="text-sm opacity-75 mt-1">Canal: {alert.channel}</p>
+                    )}
+                  </div>
+                  <span className="text-xs opacity-75 ml-4 whitespace-nowrap">{alert.date}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
