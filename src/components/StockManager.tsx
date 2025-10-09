@@ -1,14 +1,39 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { RefreshCw, Search, Filter } from 'lucide-react';
-import { mockProducts, Product } from '../data/mockData';
+import { supabase } from '../supabaseClient'; // 👈 Importa tu cliente
+
+type Product = {
+  id: number;
+  name: string;
+  sku: string;
+  price: number;
+  category: string;
+  stockmadre: number;
+  stockweb: number;
+  stockml: number;
+};
 
 export const StockManager = () => {
+  const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
 
-  const categories = ['all', ...new Set(mockProducts.map(p => p.category))];
+  // 🔹 Cargar productos desde Supabase
+  useEffect(() => {
+    const fetchProducts = async () => {
+      const { data, error } = await supabase.from('productos').select('*');
+      if (error) console.error(error);
+      else setProducts(data);
+      setLoading(false);
+    };
 
-  const filteredProducts = mockProducts.filter(product => {
+    fetchProducts();
+  }, []);
+
+  const categories = ['all', ...new Set(products.map(p => p.category))];
+
+  const filteredProducts = products.filter(product => {
     const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          product.sku.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = categoryFilter === 'all' || product.category === categoryFilter;
@@ -16,19 +41,12 @@ export const StockManager = () => {
   });
 
   const lastUpdate = new Date().toLocaleString('es-CL', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
   });
 
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('es-CL', {
-      style: 'currency',
-      currency: 'CLP'
-    }).format(price);
-  };
+  const formatPrice = (price: number) =>
+    new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(price);
 
   const getStockStatus = (stock: number) => {
     if (stock < 10) return { color: 'text-red-600', bg: 'bg-red-50', label: 'Crítico' };
@@ -36,8 +54,12 @@ export const StockManager = () => {
     return { color: 'text-green-700', bg: 'bg-green-50', label: 'Normal' };
   };
 
+  if (loading)
+    return <div className="text-center py-12 text-neutral-500">Cargando datos...</div>;
+
   return (
     <div className="space-y-6">
+      {/* Encabezado */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-neutral-900">Stock Madre</h2>
@@ -49,6 +71,7 @@ export const StockManager = () => {
         </div>
       </div>
 
+      {/* Controles de búsqueda y filtro */}
       <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6">
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <div className="flex-1 relative">
@@ -76,6 +99,7 @@ export const StockManager = () => {
           </div>
         </div>
 
+        {/* Tabla de productos */}
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -92,9 +116,8 @@ export const StockManager = () => {
             </thead>
             <tbody>
               {filteredProducts.map(product => {
-                const totalStock = product.stockMadre + product.stockWeb + product.stockML;
-                const status = getStockStatus(product.stockMadre);
-
+                const totalStock = product.stockmadre + product.stockweb + product.stockml;
+                const status = getStockStatus(product.stockmadre);
                 return (
                   <tr key={product.id} className="border-b border-neutral-100 hover:bg-neutral-50 transition-colors">
                     <td className="py-4 px-4">
@@ -103,24 +126,16 @@ export const StockManager = () => {
                         <p className="text-sm text-neutral-500">{product.category}</p>
                       </div>
                     </td>
-                    <td className="py-4 px-4">
-                      <code className="text-sm bg-neutral-100 px-2 py-1 rounded">{product.sku}</code>
-                    </td>
-                    <td className="py-4 px-4 text-center font-semibold text-neutral-900">
-                      {formatPrice(product.price)}
-                    </td>
-                    <td className="py-4 px-4 text-center">
-                      <span className={`font-bold ${status.color}`}>{product.stockMadre}</span>
-                    </td>
-                    <td className="py-4 px-4 text-center text-neutral-700">{product.stockWeb}</td>
-                    <td className="py-4 px-4 text-center text-neutral-700">{product.stockML}</td>
+                    <td className="py-4 px-4"><code className="text-sm bg-neutral-100 px-2 py-1 rounded">{product.sku}</code></td>
+                    <td className="py-4 px-4 text-center font-semibold text-neutral-900">{formatPrice(product.price)}</td>
+                    <td className="py-4 px-4 text-center font-bold text-neutral-900">{product.stockmadre}</td>
+                    <td className="py-4 px-4 text-center text-neutral-700">{product.stockweb}</td>
+                    <td className="py-4 px-4 text-center text-neutral-700">{product.stockml}</td>
                     <td className="py-4 px-4 text-center font-bold text-neutral-900">{totalStock}</td>
-                    <td className="py-4 px-4">
-                      <div className="flex justify-center">
-                        <span className={`${status.bg} ${status.color} text-xs font-semibold px-3 py-1 rounded-full`}>
-                          {status.label}
-                        </span>
-                      </div>
+                    <td className="py-4 px-4 text-center">
+                      <span className={`${status.bg} ${status.color} text-xs font-semibold px-3 py-1 rounded-full`}>
+                        {status.label}
+                      </span>
                     </td>
                   </tr>
                 );

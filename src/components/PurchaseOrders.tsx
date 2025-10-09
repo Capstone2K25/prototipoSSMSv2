@@ -1,57 +1,100 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { FileText, Upload, Download, Plus, CheckCircle, Clock, Package as PackageIcon, Minus } from 'lucide-react';
-import { mockB2BOrders, B2BOrder, mockProducts } from '../data/mockData';
+import { supabase } from '../supabaseClient';
+
+type OrderStatus = 'draft' | 'pending' | 'confirmed' | 'completed';
+
+interface Product {
+  id: string;
+  name: string;
+  sku: string;
+  description: string;
+  price: number;
+  stockMadre: number;
+}
+
+interface OrderItem {
+  productId: string;
+  productName: string;
+  sku: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+}
+
+interface B2BOrder {
+  id: string;
+  clientName: string;
+  clientRUT: string;
+  status: OrderStatus;
+  items: OrderItem[];
+  subtotal: number;
+  date: string;
+  notes: string;
+}
 
 export const PurchaseOrders = () => {
-  const [orders, setOrders] = useState<B2BOrder[]>(mockB2BOrders);
+  const [orders, setOrders] = useState<B2BOrder[]>([]);
+  const [productStock, setProductStock] = useState<Product[]>([]);
   const [showLoadOrderModal, setShowLoadOrderModal] = useState(false);
-  const [productStock, setProductStock] = useState(mockProducts);
 
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('es-CL', {
-      style: 'currency',
-      currency: 'CLP'
-    }).format(price);
-  };
+  // Formatos auxiliares
+  const formatPrice = (price: number) =>
+    new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(price);
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('es-CL', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric'
-    });
-  };
+  const formatDate = (dateString: string) =>
+    new Date(dateString).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
   const getStatusConfig = (status: B2BOrder['status']) => {
     const configs = {
-      draft: {
-        label: 'Borrador',
-        color: 'text-neutral-700',
-        bg: 'bg-neutral-100',
-        icon: <FileText size={14} />
-      },
-      pending: {
-        label: 'Pendiente',
-        color: 'text-orange-700',
-        bg: 'bg-orange-50',
-        icon: <Clock size={14} />
-      },
-      confirmed: {
-        label: 'Confirmada',
-        color: 'text-blue-700',
-        bg: 'bg-blue-50',
-        icon: <CheckCircle size={14} />
-      },
-      completed: {
-        label: 'Completada',
-        color: 'text-green-700',
-        bg: 'bg-green-50',
-        icon: <PackageIcon size={14} />
-      }
+      draft: { label: 'Borrador', color: 'text-neutral-700', bg: 'bg-neutral-100', icon: <FileText size={14} /> },
+      pending: { label: 'Pendiente', color: 'text-orange-700', bg: 'bg-orange-50', icon: <Clock size={14} /> },
+      confirmed: { label: 'Confirmada', color: 'text-blue-700', bg: 'bg-blue-50', icon: <CheckCircle size={14} /> },
+      completed: { label: 'Completada', color: 'text-green-700', bg: 'bg-green-50', icon: <PackageIcon size={14} /> }
     };
     return configs[status];
   };
 
+  // Cargar productos y órdenes desde Supabase al inicio
+  useEffect(() => {
+    const fetchData = async () => {
+      const { data: products, error: productError } = await supabase.from('productos').select('*');
+      if (productError) console.error(productError);
+      else setProductStock(products as Product[]);
+
+      const { data: ordersData, error: ordersError } = await supabase
+        .from('orders')
+        .select('*, order_items(*)')
+        .order('created_at', { ascending: false });
+
+      if (ordersError) console.error(ordersError);
+      else {
+        const adapted = ordersData.map((o: any) => ({
+          id: o.order_code,
+          clientName: o.client_name,
+          clientRUT: o.client_rut,
+          status: o.status,
+          items: o.order_items.map((i: any) => ({
+            productId: i.product_id,
+            productName: i.product_name,
+            sku: i.sku,
+            description: i.description,
+            quantity: i.quantity,
+            unitPrice: i.unit_price,
+            total: i.total
+          })),
+          subtotal: o.subtotal,
+          date: o.date,
+          notes: o.notes
+        }));
+        setOrders(adapted);
+      }
+    };
+    fetchData();
+  }, []);
+
+  // Generar orden en blanco (descargar CSV)
   const generateBlankOrder = () => {
     const orderTemplate = {
       id: `B2B-${String(orders.length + 1).padStart(3, '0')}`,
@@ -93,21 +136,18 @@ export const PurchaseOrders = () => {
       ['SUBTOTAL', '', '', '', '', ''],
       [''],
       ['Notas:']
-    ].map(row => row.join(',')).join('\n');
+    ]
+      .map(row => row.join(','))
+      .join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `OC_Blank_${orderTemplate.id}_${orderTemplate.date}.csv`;
     link.click();
-
-    alert('✅ Orden en blanco generada exitosamente.\nEl cliente debe completar las cantidades y devolverla.');
   };
 
-  const handleLoadOrder = () => {
-    setShowLoadOrderModal(true);
-  };
-
+  // Simulación de carga (puedes reemplazar por upload real)
   const simulateLoadOrder = () => {
     const newOrder: B2BOrder = {
       id: `B2B-${String(orders.length + 1).padStart(3, '0')}`,
@@ -144,22 +184,63 @@ export const PurchaseOrders = () => {
     alert('✅ Orden cargada exitosamente. Ahora puedes confirmarla y actualizar el stock.');
   };
 
-  const confirmOrderAndUpdateStock = (orderId: string) => {
+  // Confirmar y guardar en Supabase
+  const confirmOrderAndUpdateStock = async (orderId: string) => {
     const order = orders.find(o => o.id === orderId);
     if (!order) return;
 
+    const { data: orderInserted, error: orderError } = await supabase
+      .from('orders')
+      .insert([
+        {
+          order_code: order.id,
+          client_name: order.clientName,
+          client_rut: order.clientRUT,
+          status: 'completed',
+          subtotal: order.subtotal,
+          date: order.date,
+          notes: order.notes
+        }
+      ])
+      .select()
+      .single();
+
+    if (orderError) {
+      console.error(orderError);
+      alert('❌ Error al guardar la orden');
+      return;
+    }
+
+    const itemsPayload = order.items.map(item => ({
+      order_id: orderInserted.id,
+      product_id: item.productId,
+      product_name: item.productName,
+      sku: item.sku,
+      description: item.description,
+      quantity: item.quantity,
+      unit_price: item.unitPrice,
+      total: item.total
+    }));
+
+    const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
+    if (itemsError) {
+      console.error(itemsError);
+      alert('❌ Error al guardar los ítems de la orden');
+      return;
+    }
+
+    // Actualizar stock local
     const updatedStock = [...productStock];
     let lowStockWarnings: string[] = [];
 
     order.items.forEach(item => {
-      const productIndex = updatedStock.findIndex(p => p.id === item.productId);
-      if (productIndex !== -1) {
-        const newStock = updatedStock[productIndex].stockMadre - item.quantity;
-        updatedStock[productIndex] = {
-          ...updatedStock[productIndex],
+      const idx = updatedStock.findIndex(p => p.id === item.productId);
+      if (idx !== -1) {
+        const newStock = updatedStock[idx].stockMadre - item.quantity;
+        updatedStock[idx] = {
+          ...updatedStock[idx],
           stockMadre: Math.max(0, newStock)
         };
-
         if (newStock < 20) {
           lowStockWarnings.push(`${item.productName} (${item.sku}): ${newStock} unidades restantes`);
         }
@@ -167,23 +248,12 @@ export const PurchaseOrders = () => {
     });
 
     setProductStock(updatedStock);
+    setOrders(orders.map(o => (o.id === orderId ? { ...o, status: 'completed' } : o)));
 
-    const updatedOrders = orders.map(o =>
-      o.id === orderId ? { ...o, status: 'completed' as const } : o
-    );
-    setOrders(updatedOrders);
-
-    let message = `✅ Orden ${orderId} confirmada y stock actualizado exitosamente.\n\n`;
-    message += `Stock descontado:\n`;
-    order.items.forEach(item => {
-      message += `- ${item.quantity} x ${item.productName}\n`;
-    });
-
-    if (lowStockWarnings.length > 0) {
-      message += `\n⚠️ ALERTAS DE STOCK BAJO:\n${lowStockWarnings.join('\n')}`;
-    }
-
-    alert(message);
+    let msg = `✅ Orden ${order.id} confirmada y guardada en Supabase.\n\nStock descontado:\n`;
+    order.items.forEach(i => (msg += `- ${i.quantity} x ${i.productName}\n`));
+    if (lowStockWarnings.length > 0) msg += `\n⚠️ ALERTAS DE STOCK BAJO:\n${lowStockWarnings.join('\n')}`;
+    alert(msg);
   };
 
   const exportOrder = (order: B2BOrder) => {
@@ -208,7 +278,9 @@ export const PurchaseOrders = () => {
       ['SUBTOTAL', '', '', '', '', order.subtotal],
       [''],
       ['Notas:', order.notes || 'Sin notas']
-    ].map(row => row.join(',')).join('\n');
+    ]
+      .map(row => row.join(','))
+      .join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -238,7 +310,7 @@ export const PurchaseOrders = () => {
             <span>Generar OC en Blanco</span>
           </button>
           <button
-            onClick={handleLoadOrder}
+            onClick={() => setShowLoadOrderModal(true)}
             className="flex items-center space-x-2 px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-800 transition-colors"
           >
             <Upload size={18} />
@@ -294,7 +366,9 @@ export const PurchaseOrders = () => {
                       <code className="text-lg font-bold bg-neutral-900 text-white px-3 py-1 rounded">
                         {order.id}
                       </code>
-                      <span className={`${statusConfig.bg} ${statusConfig.color} px-3 py-1 rounded-full text-sm font-semibold flex items-center space-x-1`}>
+                      <span
+                        className={`${statusConfig.bg} ${statusConfig.color} px-3 py-1 rounded-full text-sm font-semibold flex items-center space-x-1`}
+                      >
                         {statusConfig.icon}
                         <span>{statusConfig.label}</span>
                       </span>
