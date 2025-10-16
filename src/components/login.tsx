@@ -1,86 +1,64 @@
 import { FormEvent, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 
-export default function Login() {
-  const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+type UserRecord = {
+  id: string
+  username: string
+  role: string | null
+  full_name: string | null
+  email: string | null
+}
+
+interface LoginProps {
+  onLogin: (user: UserRecord) => void
+}
+
+export default function Login({ onLogin }: LoginProps) {
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
+  const [loading, setLoading] = useState(false)
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
     setLoading(true)
+
     try {
-      if (mode === 'signup') {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password
-        })
-        if (error) throw error
+      // autenticación simple contra la tabla `usuarios`
+      const { data, error: qErr } = await supabase
+        .from('usuarios')
+        .select('id, username, role, full_name, email')
+        .eq('username', username)
+        .eq('password', password) // ⚠️ texto plano por ahora; luego cambiaremos a hash
+        .limit(1)
+        .maybeSingle()
 
-        // Crea/actualiza perfil al registrarse (si la sesión ya está disponible)
-        if (data.user) {
-          await supabase.from('profiles').upsert({
-            id: data.user.id,
-            email: data.user.email
-          })
-        }
+      if (qErr) throw qErr
+      if (!data) throw new Error('Usuario o contraseña incorrectos')
 
-        // Si en Auth Settings tienes "Confirm email" activado,
-        // el usuario deberá confirmar su correo antes de poder loguear.
-        navigate('/dashboard')
-      } else {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password
-        })
-        if (error) throw error
-
-        // Opcional: asegurar que exista el perfil
-        if (data.user) {
-          await supabase.from('profiles').upsert({
-            id: data.user.id,
-            email: data.user.email
-          })
-        }
-
-        navigate('/dashboard') // ← redirección tras login
-      }
+      onLogin(data as UserRecord) // sesión en memoria
     } catch (err: any) {
-      setError(err.message ?? 'Error de autenticación')
+      setError(err.message ?? 'Error al iniciar sesión')
     } finally {
       setLoading(false)
     }
   }
 
-  const resetPassword = async () => {
-    setError(null)
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin + '/login'
-    })
-    if (error) setError(error.message)
-    else alert('Te enviamos un correo para restaurar tu contraseña (si existe).')
-  }
-
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
       <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4">
-        <h1 className="text-2xl font-semibold">
-          {mode === 'signin' ? 'Iniciar sesión' : 'Crear cuenta'}
-        </h1>
+        <h1 className="text-2xl font-semibold">Iniciar sesión</h1>
 
         <input
           className="w-full border rounded-xl p-3"
-          type="email"
-          placeholder="tu@email.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          type="text"
+          placeholder="Usuario"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
           required
         />
+
         <input
           className="w-full border rounded-xl p-3"
           type="password"
@@ -92,30 +70,8 @@ export default function Login() {
 
         {error && <p className="text-red-600 text-sm">{error}</p>}
 
-        <button
-          disabled={loading}
-          className="w-full rounded-xl p-3 border"
-          type="submit"
-        >
-          {loading ? 'Cargando…' : mode === 'signin' ? 'Entrar' : 'Registrarme'}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
-          className="w-full text-sm underline"
-        >
-          {mode === 'signin'
-            ? '¿No tienes cuenta? Crea una'
-            : '¿Ya tienes cuenta? Inicia sesión'}
-        </button>
-
-        <button
-          type="button"
-          onClick={resetPassword}
-          className="w-full text-sm underline"
-        >
-          Olvidé mi contraseña
+        <button disabled={loading} className="w-full rounded-xl p-3 border" type="submit">
+          {loading ? 'Verificando...' : 'Entrar'}
         </button>
       </form>
     </div>
