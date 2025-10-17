@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import {
   LayoutDashboard,
   Package,
@@ -11,7 +11,7 @@ import {
   X,
   LogOut
 } from 'lucide-react'
-import { getUnreadAlertsCount } from '../data/mockData'
+import { supabase } from '../supabaseClient'
 
 interface LayoutProps {
   children: ReactNode
@@ -37,7 +37,39 @@ interface Tab {
 export const Layout = ({ children, onLogout, user }: LayoutProps) => {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard')
   const [menuOpen, setMenuOpen] = useState(false)
-  const unreadAlerts = getUnreadAlertsCount()
+
+  // ---- Badge dinámico para alertas no leídas ----
+  const [unreadAlerts, setUnreadAlerts] = useState(0)
+
+  const loadUnreadAlerts = async () => {
+    const { count, error } = await supabase
+      .from('alerts')
+      .select('id', { count: 'exact', head: true })
+      .eq('read', false)
+
+    if (!error) setUnreadAlerts(count || 0)
+  }
+
+  useEffect(() => {
+    // carga inicial
+    loadUnreadAlerts()
+
+    // escucha eventos del bus para refrescar el badge
+    const onNew = () => loadUnreadAlerts()      // cuando se crea una alerta
+    const onRefresh = () => loadUnreadAlerts()  // cuando se marcan leídas/acciones
+
+    window.addEventListener('app:alert', onNew)
+    window.addEventListener('alerts:refresh', onRefresh)
+
+    // polling suave por si cambian fuera de esta vista
+    const interval = setInterval(loadUnreadAlerts, 30000)
+
+    return () => {
+      window.removeEventListener('app:alert', onNew)
+      window.removeEventListener('alerts:refresh', onRefresh)
+      clearInterval(interval)
+    }
+  }, [])
 
   const tabs: Tab[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
