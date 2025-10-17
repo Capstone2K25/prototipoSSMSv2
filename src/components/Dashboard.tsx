@@ -8,7 +8,11 @@ import {
   Store,
   Building2,
   ShoppingBag,
-  Filter
+  Filter,
+  ChevronsLeft,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsRight
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -30,13 +34,22 @@ type Product = {
   stockml: number;
 };
 
+type Channel = 'all' | 'B2B' | 'Web' | 'ML';
+
 export const Dashboard = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filtros
+  // Filtros globales
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [search, setSearch] = useState<string>('');
+
+  // Filtro local (tarjeta) de alertas por canal
+  const [channelFilter, setChannelFilter] = useState<Channel>('all');
+
+  // Paginación local de alertas
+  const [alertPage, setAlertPage] = useState(1);
+  const [alertPageSize, setAlertPageSize] = useState(10);
 
   // Umbral bajo stock (por canal)
   const THRESHOLD = 10;
@@ -66,7 +79,7 @@ export const Dashboard = () => {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [products]);
 
-  // Subconjunto filtrado
+  // Subconjunto filtrado (global)
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return products.filter(p => {
@@ -79,7 +92,7 @@ export const Dashboard = () => {
     });
   }, [products, categoryFilter, search]);
 
-  // Totales por canal (en base al filtro)
+  // Totales por canal (en base al filtro global)
   const totalB2B = useMemo(() => filtered.reduce((acc, p) => acc + (p.stockb2b || 0), 0), [filtered]);
   const totalWeb = useMemo(() => filtered.reduce((acc, p) => acc + (p.stockweb || 0), 0), [filtered]);
   const totalML  = useMemo(() => filtered.reduce((acc, p) => acc + (p.stockml  || 0), 0), [filtered]);
@@ -93,19 +106,44 @@ export const Dashboard = () => {
       .slice(0, 5);
   }, [filtered]);
 
-  // Alertas de stock bajo por canal (filtrado)
+  // Alertas de stock bajo por canal (filtrado global)
   type LowEntry = { id: number; name: string; sku: string; channel: 'B2B' | 'Web' | 'ML'; value: number };
-  const lowByChannel: LowEntry[] = useMemo(() => {
+  const lowByChannelAll: LowEntry[] = useMemo(() => {
     const out: LowEntry[] = [];
     for (const p of filtered) {
       if ((p.stockb2b || 0) < THRESHOLD) out.push({ id: p.id, name: p.name, sku: p.sku, channel: 'B2B', value: p.stockb2b || 0 });
       if ((p.stockweb || 0) < THRESHOLD) out.push({ id: p.id, name: p.name, sku: p.sku, channel: 'Web', value: p.stockweb || 0 });
       if ((p.stockml  || 0) < THRESHOLD) out.push({ id: p.id, name: p.name, sku: p.sku, channel: 'ML',  value: p.stockml  || 0 });
     }
-    // Ordenamos primero por valor asc y luego por canal
     const channelRank = { B2B: 0, Web: 1, ML: 2 } as const;
     return out.sort((a, b) => (a.value - b.value) || (channelRank[a.channel] - channelRank[b.channel]));
   }, [filtered]);
+
+  // Filtro de canal solo para la tarjeta
+  const lowByChannelFiltered = useMemo(() => {
+    const base = channelFilter === 'all'
+      ? lowByChannelAll
+      : lowByChannelAll.filter(e => e.channel === channelFilter);
+    // reset de página si el filtro reduce resultados
+    setAlertPage(1);
+    return base;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lowByChannelAll, channelFilter]);
+
+  // Paginación local sobre alertas
+  const alertTotal = lowByChannelFiltered.length;
+  const alertTotalPages = Math.max(1, Math.ceil(alertTotal / alertPageSize));
+  const alertFrom = alertTotal === 0 ? 0 : (alertPage - 1) * alertPageSize + 1;
+  const alertTo = Math.min(alertTotal, alertPage * alertPageSize);
+  const alertsPageData = useMemo(() => {
+    const from = (alertPage - 1) * alertPageSize;
+    return lowByChannelFiltered.slice(from, from + alertPageSize);
+  }, [lowByChannelFiltered, alertPage, alertPageSize]);
+
+  const goFirst = () => setAlertPage(1);
+  const goPrev  = () => setAlertPage(p => Math.max(1, p - 1));
+  const goNext  = () => setAlertPage(p => Math.min(alertTotalPages, p + 1));
+  const goLast  = () => setAlertPage(alertTotalPages);
 
   // Datos para mini-gráficos (composición por canal)
   const compData = useMemo(() => ([
@@ -114,7 +152,7 @@ export const Dashboard = () => {
     { canal: 'ML',  value: totalML  },
   ]), [totalB2B, totalWeb, totalML]);
 
-  // Sparklines por canal (simple serie Line con 3 puntos B2B/Web/ML simulando composición)
+  // Sparklines (3 puntos: B2B/Web/ML)
   const sparkData = useMemo(() => {
     return [
       { idx: 1, b2b: totalB2B, web: undefined, ml: undefined },
@@ -131,7 +169,7 @@ export const Dashboard = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header + filtros */}
+      {/* Header + filtros globales */}
       <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-neutral-900">Dashboard</h2>
@@ -178,7 +216,7 @@ export const Dashboard = () => {
           </div>
           <p className="text-3xl font-bold text-neutral-900">{totalMadre}</p>
           <p className="text-sm text-neutral-500 mt-2">unidades totales (según filtros)</p>
-          <div className="mt-4 h-10">
+          <div className="mt-4" style={{ width: '100%', height: 40 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={compData}>
                 <XAxis dataKey="canal" hide />
@@ -197,7 +235,7 @@ export const Dashboard = () => {
           </div>
           <p className="text-3xl font-bold text-neutral-900">{totalB2B}</p>
           <p className="text-sm text-neutral-500 mt-2">unidades canal B2B</p>
-          <div className="mt-4 h-10">
+          <div className="mt-4" style={{ width: '100%', height: 40 }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={sparkData}>
                 <Tooltip cursor={false} />
@@ -215,7 +253,7 @@ export const Dashboard = () => {
           </div>
           <p className="text-3xl font-bold text-neutral-900">{totalWeb}</p>
           <p className="text-sm text-neutral-500 mt-2">unidades en sitio web</p>
-          <div className="mt-4 h-10">
+          <div className="mt-4" style={{ width: '100%', height: 40 }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={sparkData}>
                 <Tooltip cursor={false} />
@@ -233,7 +271,7 @@ export const Dashboard = () => {
           </div>
           <p className="text-3xl font-bold text-neutral-900">{totalML}</p>
           <p className="text-sm text-neutral-500 mt-2">unidades en Mercado Libre</p>
-          <div className="mt-4 h-10">
+          <div className="mt-4" style={{ width: '100%', height: 40 }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={sparkData}>
                 <Tooltip cursor={false} />
@@ -275,37 +313,93 @@ export const Dashboard = () => {
           </div>
         </div>
 
-        {/* Alertas de stock bajo por canal */}
+        {/* Alertas de stock bajo por canal (con filtro y paginación) */}
         <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6">
-          <div className="flex items-center space-x-2 mb-4">
-            <AlertTriangle className="text-red-600" size={24} />
-            <h3 className="text-lg font-bold text-neutral-900">Alertas de Stock Bajo por Canal</h3>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="text-red-600" size={24} />
+              <h3 className="text-lg font-bold text-neutral-900">Alertas de Stock Bajo por Canal</h3>
+            </div>
+
+            {/* Filtro de canal (solo afecta esta tarjeta) */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-neutral-600">Canal:</span>
+              <select
+                value={channelFilter}
+                onChange={(e) => setChannelFilter(e.target.value as Channel)}
+                className="border rounded-lg px-2 py-1 text-sm"
+                title="Filtrar alertas por canal"
+              >
+                <option value="all">Todos</option>
+                <option value="B2B">B2B</option>
+                <option value="Web">Web</option>
+                <option value="ML">ML</option>
+              </select>
+            </div>
           </div>
 
-          {lowByChannel.length === 0 ? (
+          {alertsPageData.length === 0 ? (
             <p className="text-sm text-neutral-500">No hay alertas con el filtro actual 🎉</p>
           ) : (
-            <div className="space-y-3">
-              {lowByChannel.map(entry => (
-                <div key={`${entry.id}-${entry.channel}`} className="flex items-center justify-between border-b pb-3 last:border-0">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-neutral-900 truncate">{entry.name}</p>
-                    <p className="text-xs text-neutral-500">{entry.sku}</p>
+            <>
+              <div className="space-y-3">
+                {alertsPageData.map(entry => (
+                  <div key={`${entry.id}-${entry.channel}`} className="flex items-center justify-between border-b pb-3 last:border-0">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-neutral-900 truncate">{entry.name}</p>
+                      <p className="text-xs text-neutral-500">{entry.sku}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className={`px-2 py-1 rounded text-xs font-semibold
+                        ${entry.channel === 'B2B' ? 'bg-fuchsia-100 text-fuchsia-700'
+                          : entry.channel === 'Web' ? 'bg-blue-100 text-blue-700'
+                          : 'bg-amber-100 text-amber-700'}`}>
+                        {entry.channel}
+                      </span>
+                      <span className={`text-sm font-bold ${entry.value < 5 ? 'text-red-600' : 'text-orange-600'}`}>
+                        {entry.value}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`px-2 py-1 rounded text-xs font-semibold
-                      ${entry.channel === 'B2B' ? 'bg-fuchsia-100 text-fuchsia-700'
-                        : entry.channel === 'Web' ? 'bg-blue-100 text-blue-700'
-                        : 'bg-amber-100 text-amber-700'}`}>
-                      {entry.channel}
+                ))}
+              </div>
+
+              {/* Paginación de alertas */}
+              <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="text-sm text-neutral-600">
+                  Mostrando <strong>{alertFrom}</strong>–<strong>{alertTo}</strong> de <strong>{alertTotal}</strong> alertas
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-neutral-600">Por página:</span>
+                  <select
+                    value={alertPageSize}
+                    onChange={(e) => { setAlertPageSize(Number(e.target.value)); setAlertPage(1); }}
+                    className="border rounded px-2 py-1 text-sm"
+                  >
+                    {[5, 10, 20, 30].map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+
+                  <div className="flex items-center gap-1 ml-2">
+                    <button className="border rounded p-1 disabled:opacity-50" onClick={goFirst} disabled={alertPage === 1}>
+                      <ChevronsLeft size={16} />
+                    </button>
+                    <button className="border rounded p-1 disabled:opacity-50" onClick={goPrev} disabled={alertPage === 1}>
+                      <ChevronLeft size={16} />
+                    </button>
+                    <span className="mx-2 text-sm">
+                      Página <strong>{alertPage}</strong> de <strong>{alertTotalPages}</strong>
                     </span>
-                    <span className={`text-sm font-bold ${entry.value < 5 ? 'text-red-600' : 'text-orange-600'}`}>
-                      {entry.value}
-                    </span>
+                    <button className="border rounded p-1 disabled:opacity-50" onClick={goNext} disabled={alertPage === alertTotalPages}>
+                      <ChevronRight size={16} />
+                    </button>
+                    <button className="border rounded p-1 disabled:opacity-50" onClick={goLast} disabled={alertPage === alertTotalPages}>
+                      <ChevronsRight size={16} />
+                    </button>
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            </>
           )}
 
           <p className="text-xs text-neutral-400 mt-3">

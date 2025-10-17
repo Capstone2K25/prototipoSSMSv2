@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, startTransition } from 'react';
-import { Plus, Pencil, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, startTransition } from 'react';
+import { Plus, Pencil, Trash2, X, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import { emitAlert } from '../state/alertsBus';
@@ -8,7 +8,7 @@ type Product = {
   id: number;
   name: string;
   sku: string;
-  price: number;
+  price: number | string;
   categoria?: string | null;
   stockb2b: number;
   stockweb: number;
@@ -18,68 +18,100 @@ type Product = {
 type SortField = 'name' | 'sku' | 'categoria' | 'price' | 'stockb2b' | 'stockweb' | 'stockml';
 type SortOrder = 'asc' | 'desc';
 
-// ---------- Helpers de validación/parseo para inputs numéricos ----------
-const intLike = (s: string) => s === '' || s === '-' || /^-?\d+$/.test(s);     // permite negativos al editar
-const intLikeNonNeg = (s: string) => s === '' || /^\d+$/.test(s);              // solo no-negativos (crear)
+// ---------- Helpers numéricos ----------
 const toInt = (s: unknown) => {
   const n = parseInt(String(s ?? '').replace(/\s+/g, ''), 10);
   return Number.isFinite(n) ? n : 0;
 };
 
-// ---------- Umbral de "Low Stock" por canal ----------
-const LOW_STOCK_THRESHOLD = 10;
-
 export const StockManager = () => {
   // Categorías (puedes cargar de BD si quieres)
   const CATEGORIES = ['Ropa','Pantalones','Shorts','Poleras','Polerones','Gorros','Accesorios','Chaquetas','Poleras manga larga'];
 
+  // Datos
   const [products, setProducts] = useState<Product[]>([]);
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [totalRows, setTotalRows] = useState<number>(0);
+
+  // Filtro / búsqueda
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
 
-  const [loading, setLoading] = useState(true);
-  const [sorting, setSorting] = useState(false);
+  // Orden
+  const [sortField, setSortField] = useState<SortField>('name');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
+
+  // Paginación
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+
+  // Estados UI
+  const [loading, setLoading] = useState(true);   // primera carga
+  const [tableBusy, setTableBusy] = useState(false); // paginación/orden/búsqueda "silenciosa"
   const [lastUpdate, setLastUpdate] = useState<string>('');
 
+  // Modal
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [isExistingSKU, setIsExistingSKU] = useState<boolean>(false);
 
-  const [sortField, setSortField] = useState<SortField>('name');
-  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
+  // Selección múltiple
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
+  // Abort para evitar carreras
   const abortRef = useRef<AbortController | null>(null);
 
+  // Debounce búsqueda
+  const [debouncedSearch, setDebouncedSearch] = useState(searchTerm);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
   // ---------- Toast + persistencia en alerts ----------
-  const toastAndLog = (msg: string, type: 'info' | 'error' | 'sync' | 'low-stock' = 'info') => {
+  const toastAndLog = (msg: string, type: 'info' | 'error' | 'sync' = 'info') => {
     if (type === 'error') toast.error(msg);
     else if (type === 'sync') toast.success(msg);
-    else if (type === 'low-stock') toast(msg, { icon: '⚠️' });
     else toast(msg, { icon: 'ℹ️' });
     emitAlert({ type, message: msg, channel: 'stock' });
   };
 
-  // ---------- Fetch productos (con orden dinámico y modo "silent") ----------
-  const fetchProducts = async (
-    field: SortField = sortField,
-    order: SortOrder = sortOrder,
-    opts: { silent?: boolean } = {}
-  ) => {
-    const { silent = false } = opts;
-
+  // ---------- Query a Supabase con filtros/orden/paginación ----------
+  const fetchProducts = async (opts?: { silent?: boolean; keepSelection?: boolean }) => {
+    const { silent = false, keepSelection = false } = opts || {};
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
-      if (!silent) setLoading(true);
-      if (silent) setSorting(true);
+      if (!silent && products.length === 0) setLoading(true);
+      setTableBusy(true);
 
-      const { data, error } = await supabase
+      // base select con conteo exacto
+      let query = supabase
         .from('productos')
-        .select('id, name, sku, price, categoria, stockb2b, stockweb, stockml')
-        .order(field, { ascending: order === 'asc' });
+        .select('id, name, sku, price, categoria, stockb2b, stockweb, stockml', { count: 'exact' });
+
+      // Filtro por categoría
+      if (categoryFilter !== 'all') {
+        query = query.eq('categoria', categoryFilter);
+      }
+
+      // Búsqueda por nombre o SKU
+      if (debouncedSearch) {
+        const term = debouncedSearch.replace(/%/g, '').toLowerCase();
+        // or() agrupa condiciones OR y se combina con los otros filtros mediante AND
+        query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%`);
+      }
+
+      // Orden
+      query = query.order(sortField, { ascending: sortOrder === 'asc', nullsFirst: true });
+
+      // Paginación (1-based page)
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      query = query.range(from, to);
+
+      const { data, error, count } = await query;
 
       if (error) throw error;
 
@@ -96,21 +128,25 @@ export const StockManager = () => {
 
       startTransition(() => {
         setProducts(mapped);
+        setTotalRows(count ?? 0);
         setLastUpdate(new Date().toLocaleTimeString());
+        if (!keepSelection) setSelectedIds([]);
       });
     } catch (err: any) {
       if (err?.name === 'AbortError') return;
       console.error('Error al obtener productos:', err);
       toastAndLog('No se pudieron cargar productos.', 'error');
     } finally {
-      if (!silent) setLoading(false);
-      if (silent) setSorting(false);
+      setLoading(false);
+      setTableBusy(false);
     }
   };
 
+  // Carga inicial
   useEffect(() => {
-    fetchProducts(sortField, sortOrder, { silent: false });
-    const interval = setInterval(() => fetchProducts(sortField, sortOrder, { silent: true }), 100000);
+    fetchProducts();
+    // Auto refresh (silencioso)
+    const interval = setInterval(() => fetchProducts({ silent: true, keepSelection: true }), 100000);
     return () => {
       clearInterval(interval);
       abortRef.current?.abort();
@@ -118,23 +154,26 @@ export const StockManager = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Refetch cuando cambian filtros/orden/paginación
+  useEffect(() => {
+    // Si se cambia filtro o búsqueda, vuelve a la primera página
+    setPage(1);
+  }, [categoryFilter, debouncedSearch, pageSize]);
+
+  useEffect(() => {
+    fetchProducts({ silent: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortField, sortOrder, page, pageSize, categoryFilter, debouncedSearch]);
+
+  // ---------- Orden ----------
   const handleSort = (field: SortField) => {
     const nextOrder: SortOrder = sortField === field && sortOrder === 'asc' ? 'desc' : 'asc';
     setSortField(field);
     setSortOrder(nextOrder);
-    void fetchProducts(field, nextOrder, { silent: true });
   };
 
-  // ---------- Filtrado local ----------
-  const filteredProducts = products.filter((product) => {
-    const matchesSearch =
-      product.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.sku?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory =
-      categoryFilter === 'all' ||
-      (product.categoria || '').toLowerCase() === categoryFilter.toLowerCase();
-    return matchesSearch && matchesCategory;
-  });
+  // ---------- Filtrado local (ya no filtra datos; solo muestra contadores si necesitas) ----------
+  const stockTotal = (p: Product) => (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0);
 
   // ---------- Utilidades UI ----------
   const formatPrice = (price: number) =>
@@ -146,12 +185,17 @@ export const StockManager = () => {
     return { color: 'text-green-700', bg: 'bg-green-50', label: 'Normal' };
   };
 
+  // ---------- Selección ----------
   const toggleSelect = (id: number) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
   };
+  const allSelectedOnPage = useMemo(
+    () => products.length > 0 && selectedIds.length === products.length && products.every(p => selectedIds.includes(p.id)),
+    [products, selectedIds]
+  );
   const toggleSelectAll = () => {
-    if (selectedIds.length === filteredProducts.length) setSelectedIds([]);
-    else setSelectedIds(filteredProducts.map((p) => p.id));
+    if (allSelectedOnPage) setSelectedIds([]);
+    else setSelectedIds(products.map((p) => p.id));
   };
 
   // ---------- Eliminar seleccionados ----------
@@ -169,8 +213,14 @@ export const StockManager = () => {
         emitAlert({ type: 'error', message: `Producto eliminado: ${p.name} (SKU ${p.sku})`, channel: 'stock' })
       );
       toast.success('Productos eliminados correctamente.');
+
+      // Si la página queda vacía tras borrar, retrocede una página
+      const remaining = totalRows - selectedIds.length;
+      const lastPage = Math.max(1, Math.ceil(remaining / pageSize));
+      if (page > lastPage) setPage(lastPage);
+      else fetchProducts({ silent: true });
+
       setSelectedIds([]);
-      fetchProducts(sortField, sortOrder, { silent: true });
     }
   };
 
@@ -206,7 +256,6 @@ export const StockManager = () => {
         });
         toastAndLog(`SKU encontrado: ${data.name} (SKU ${data.sku}) — solo suma/resta de stock habilitada`, 'info');
       } else {
-        // SKU nuevo -> stocks iniciales como string no-negativa
         setIsExistingSKU(false);
         setEditingProduct((prev: any) => ({
           ...prev,
@@ -284,26 +333,10 @@ export const StockManager = () => {
           `Stock actualizado: ${name} (SKU ${sku}) • B2B ${origB2B}→${nuevos.stockb2b} | Web ${origWeb}→${nuevos.stockweb} | ML ${origMl}→${nuevos.stockml} • Total ${totalAntes}→${totalDespues}`,
           'sync'
         );
-
-        // ---- LOW STOCK: detectar cruce de umbral (de >=TH a <TH) y alertar por canal ----
-        const crossedB2B = (origB2B >= LOW_STOCK_THRESHOLD) && (nuevos.stockb2b < LOW_STOCK_THRESHOLD);
-        const crossedWeb = (origWeb >= LOW_STOCK_THRESHOLD) && (nuevos.stockweb < LOW_STOCK_THRESHOLD);
-        const crossedML  = (origMl  >= LOW_STOCK_THRESHOLD) && (nuevos.stockml  < LOW_STOCK_THRESHOLD);
-
-        if (crossedB2B) {
-          toastAndLog(`Low Stock B2B: ${name} (SKU ${sku}) — B2B: ${nuevos.stockb2b}`, 'low-stock');
-        }
-        if (crossedWeb) {
-          toastAndLog(`Low Stock Web: ${name} (SKU ${sku}) — Web: ${nuevos.stockweb}`, 'low-stock');
-        }
-        if (crossedML) {
-          toastAndLog(`Low Stock ML: ${name} (SKU ${sku}) — ML: ${nuevos.stockml}`, 'low-stock');
-        }
-
       } else {
         // CREAR: stocks iniciales (solo no-negativos)
         const name = (editingProduct.name || '').toString().trim();
-        const price = Number(toInt(editingProduct.price));
+        const price = toInt(editingProduct.price);
         const categoria = (editingProduct.categoria || '').toString().trim();
         const sku = editingProduct.sku.toString().trim();
 
@@ -325,17 +358,6 @@ export const StockManager = () => {
 
         const total = sB2B + sWeb + sML;
         toastAndLog(`Producto creado: ${newProd.name} (SKU ${newProd.sku}) • B2B ${sB2B} | Web ${sWeb} | ML ${sML} • Total ${total}`, 'sync');
-
-        // ---- LOW STOCK inicial por canal ----
-        if (sB2B < LOW_STOCK_THRESHOLD) {
-          toastAndLog(`Low Stock B2B: ${newProd.name} (SKU ${newProd.sku}) — B2B: ${sB2B}`, 'low-stock');
-        }
-        if (sWeb < LOW_STOCK_THRESHOLD) {
-          toastAndLog(`Low Stock Web: ${newProd.name} (SKU ${newProd.sku}) — Web: ${sWeb}`, 'low-stock');
-        }
-        if (sML < LOW_STOCK_THRESHOLD) {
-          toastAndLog(`Low Stock ML: ${newProd.name} (SKU ${newProd.sku}) — ML: ${sML}`, 'low-stock');
-        }
       }
     } catch (err) {
       console.error('Error en saveProduct:', err);
@@ -344,7 +366,7 @@ export const StockManager = () => {
       setShowModal(false);
       setEditingProduct(null);
       setIsExistingSKU(false);
-      fetchProducts(sortField, sortOrder, { silent: true });
+      fetchProducts({ silent: true });
     }
   };
 
@@ -354,7 +376,6 @@ export const StockManager = () => {
     setIsExistingSKU(false);
     setShowModal(true);
   };
-
   const openEditModal = (p: Product) => {
     setEditingProduct({
       ...p,
@@ -370,9 +391,17 @@ export const StockManager = () => {
     setShowModal(true);
   };
 
-  if (loading) return <div className="text-center py-12 text-neutral-500">Cargando datos...</div>;
+  // ---------- Paginación helpers ----------
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const showingFrom = totalRows === 0 ? 0 : (page - 1) * pageSize + 1;
+  const showingTo = Math.min(totalRows, page * pageSize);
 
-  const stockTotal = (p: Product) => (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0);
+  const goFirst = () => setPage(1);
+  const goPrev = () => setPage((p) => Math.max(1, p - 1));
+  const goNext = () => setPage((p) => Math.min(totalPages, p + 1));
+  const goLast = () => setPage(totalPages);
+
+  if (loading) return <div className="text-center py-12 text-neutral-500">Cargando datos...</div>;
 
   return (
     <div className="space-y-6">
@@ -381,7 +410,7 @@ export const StockManager = () => {
         <div>
           <h2 className="text-2xl font-bold">Gestión de Inventario</h2>
           <p className="text-sm text-neutral-600">
-            Última sync: {lastUpdate} {sorting && <span className="ml-2 text-xs text-neutral-400">(ordenando…)</span>}
+            Última sync: {lastUpdate} {tableBusy && <span className="ml-2 text-xs text-neutral-400">(actualizando…)</span>}
           </p>
         </div>
 
@@ -427,7 +456,7 @@ export const StockManager = () => {
               <th className="py-3 px-4 text-center">
                 <input
                   type="checkbox"
-                  checked={selectedIds.length === filteredProducts.length && filteredProducts.length > 0}
+                  checked={allSelectedOnPage}
                   onChange={toggleSelectAll}
                 />
               </th>
@@ -445,11 +474,11 @@ export const StockManager = () => {
                   key={key}
                   className={`py-3 px-4 ${align} cursor-pointer select-none`}
                   onClick={() => handleSort(key)}
+                  title="Click para ordenar"
                 >
                   <div className="inline-flex items-center gap-1">
                     <span>{label}</span>
                     {sortField === key && <span className="text-neutral-500">{sortOrder === 'asc' ? '▲' : '▼'}</span>}
-                    {sortField === key && sorting && <span className="text-neutral-400 text-xs ml-1">…</span>}
                   </div>
                 </th>
               ))}
@@ -460,7 +489,7 @@ export const StockManager = () => {
           </thead>
 
           <tbody>
-            {filteredProducts.map((p) => (
+            {products.map((p) => (
               <tr key={p.id} className="border-b hover:bg-neutral-50">
                 <td className="text-center">
                   <input type="checkbox" checked={selectedIds.includes(p.id)} onChange={() => toggleSelect(p.id)} />
@@ -469,7 +498,7 @@ export const StockManager = () => {
                 <td className="py-3 px-4">{p.name}</td>
                 <td className="py-3 px-4"><code className="bg-neutral-100 px-2 py-1 rounded">{p.sku}</code></td>
                 <td className="py-3 px-4 text-center">{p.categoria}</td>
-                <td className="py-3 px-4 text-center">{formatPrice(p.price)}</td>
+                <td className="py-3 px-4 text-center">{formatPrice(Number(p.price))}</td>
 
                 <td className="py-3 px-4 text-center">
                   {(() => { const s = getStockStatus(p.stockb2b ?? 0);
@@ -497,13 +526,49 @@ export const StockManager = () => {
               </tr>
             ))}
 
-            {filteredProducts.length === 0 && (
+            {products.length === 0 && (
               <tr>
                 <td colSpan={10} className="text-center py-8 text-neutral-500">No se encontraron productos</td>
               </tr>
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Paginación */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div className="text-sm text-neutral-600">
+          Mostrando <strong>{showingFrom}</strong>–<strong>{showingTo}</strong> de <strong>{totalRows}</strong> resultados
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-neutral-600">Filas por página:</span>
+          <select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            className="border rounded px-2 py-1 text-sm"
+          >
+            {[10, 20, 30, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+
+          <div className="flex items-center gap-1 ml-2">
+            <button className="border rounded p-1 disabled:opacity-50" onClick={goFirst} disabled={page === 1}>
+              <ChevronsLeft size={16} />
+            </button>
+            <button className="border rounded p-1 disabled:opacity-50" onClick={goPrev} disabled={page === 1}>
+              <ChevronLeft size={16} />
+            </button>
+            <span className="mx-2 text-sm">
+              Página <strong>{page}</strong> de <strong>{totalPages}</strong>
+            </span>
+            <button className="border rounded p-1 disabled:opacity-50" onClick={goNext} disabled={page === totalPages}>
+              <ChevronRight size={16} />
+            </button>
+            <button className="border rounded p-1 disabled:opacity-50" onClick={goLast} disabled={page === totalPages}>
+              <ChevronsRight size={16} />
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* MODAL */}
@@ -550,7 +615,7 @@ export const StockManager = () => {
                   <strong>Categoría:</strong> {editingProduct?.categoria || '—'}
                 </div>
 
-                {/* Deltas con "-" permitido */}
+                {/* Deltas con "-" permitido — onBeforeInput/onPaste */}
                 <div className="grid grid-cols-3 gap-3 mt-3">
                   {/* B2B */}
                   <div>
@@ -564,10 +629,21 @@ export const StockManager = () => {
                       type="text"
                       inputMode="numeric"
                       value={editingProduct?.stockb2b ?? ''}
-                      onChange={(e) => {
-                        const v = e.target.value.trim();
-                        if (intLike(v)) setEditingProduct({ ...editingProduct, stockb2b: v });
+                      onBeforeInput={(e) => {
+                        const el = e.currentTarget;
+                        const start = el.selectionStart ?? el.value.length;
+                        const end = el.selectionEnd ?? el.value.length;
+                        const data = (e as any).data ?? '';
+                        const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                        if (!/^(-?\d*)$/.test(proposed)) e.preventDefault();
+                        if (data === '-' && start !== 0) e.preventDefault();
+                        if (data?.includes('-') && el.value.includes('-') && start === 0) e.preventDefault();
                       }}
+                      onPaste={(e) => {
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        if (!/^(-?\d*)$/.test(paste)) e.preventDefault();
+                      }}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stockb2b: e.target.value })}
                       className="w-full border rounded px-2 py-2"
                       placeholder="Ej: -2 o 5"
                       aria-label="Cantidad a sumar al stock B2B"
@@ -588,10 +664,21 @@ export const StockManager = () => {
                       type="text"
                       inputMode="numeric"
                       value={editingProduct?.stockweb ?? ''}
-                      onChange={(e) => {
-                        const v = e.target.value.trim();
-                        if (intLike(v)) setEditingProduct({ ...editingProduct, stockweb: v });
+                      onBeforeInput={(e) => {
+                        const el = e.currentTarget;
+                        const start = el.selectionStart ?? el.value.length;
+                        const end = el.selectionEnd ?? el.value.length;
+                        const data = (e as any).data ?? '';
+                        const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                        if (!/^(-?\d*)$/.test(proposed)) e.preventDefault();
+                        if (data === '-' && start !== 0) e.preventDefault();
+                        if (data?.includes('-') && el.value.includes('-') && start === 0) e.preventDefault();
                       }}
+                      onPaste={(e) => {
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        if (!/^(-?\d*)$/.test(paste)) e.preventDefault();
+                      }}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stockweb: e.target.value })}
                       className="w-full border rounded px-2 py-2"
                       placeholder="Ej: -1 o 3"
                       aria-label="Cantidad a sumar al stock Web"
@@ -612,10 +699,21 @@ export const StockManager = () => {
                       type="text"
                       inputMode="numeric"
                       value={editingProduct?.stockml ?? ''}
-                      onChange={(e) => {
-                        const v = e.target.value.trim();
-                        if (intLike(v)) setEditingProduct({ ...editingProduct, stockml: v });
+                      onBeforeInput={(e) => {
+                        const el = e.currentTarget;
+                        const start = el.selectionStart ?? el.value.length;
+                        const end = el.selectionEnd ?? el.value.length;
+                        const data = (e as any).data ?? '';
+                        const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                        if (!/^(-?\d*)$/.test(proposed)) e.preventDefault();
+                        if (data === '-' && start !== 0) e.preventDefault();
+                        if (data?.includes('-') && el.value.includes('-') && start === 0) e.preventDefault();
                       }}
+                      onPaste={(e) => {
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        if (!/^(-?\d*)$/.test(paste)) e.preventDefault();
+                      }}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stockml: e.target.value })}
                       className="w-full border rounded px-2 py-2"
                       placeholder="Ej: -3 o 2"
                       aria-label="Cantidad a sumar al stock ML"
@@ -644,10 +742,19 @@ export const StockManager = () => {
                     type="text"
                     inputMode="numeric"
                     value={editingProduct?.price ?? ''}
-                    onChange={(e) => {
-                      const v = e.target.value.trim();
-                      if (intLikeNonNeg(v)) setEditingProduct({ ...editingProduct, price: v });
+                    onBeforeInput={(e) => {
+                      const el = e.currentTarget;
+                      const start = el.selectionStart ?? el.value.length;
+                      const end = el.selectionEnd ?? el.value.length;
+                      const data = (e as any).data ?? '';
+                      const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                      if (!/^\d*$/.test(proposed)) e.preventDefault();
                     }}
+                    onPaste={(e) => {
+                      const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                      if (!/^\d*$/.test(paste)) e.preventDefault();
+                    }}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, price: e.target.value })}
                     className="w-full border rounded px-3 py-2"
                   />
                 </div>
@@ -676,10 +783,19 @@ export const StockManager = () => {
                       type="text"
                       inputMode="numeric"
                       value={editingProduct?.stockb2b ?? ''}
-                      onChange={(e) => {
-                        const v = e.target.value.trim();
-                        if (intLikeNonNeg(v)) setEditingProduct({ ...editingProduct, stockb2b: v });
+                      onBeforeInput={(e) => {
+                        const el = e.currentTarget;
+                        const start = el.selectionStart ?? el.value.length;
+                        const end = el.selectionEnd ?? el.value.length;
+                        const data = (e as any).data ?? '';
+                        const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                        if (!/^\d*$/.test(proposed)) e.preventDefault();
                       }}
+                      onPaste={(e) => {
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        if (!/^\d*$/.test(paste)) e.preventDefault();
+                      }}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stockb2b: e.target.value })}
                       className="w-full border rounded px-2 py-2"
                       placeholder="0"
                       aria-label="Stock inicial B2B"
@@ -695,10 +811,19 @@ export const StockManager = () => {
                       type="text"
                       inputMode="numeric"
                       value={editingProduct?.stockweb ?? ''}
-                      onChange={(e) => {
-                        const v = e.target.value.trim();
-                        if (intLikeNonNeg(v)) setEditingProduct({ ...editingProduct, stockweb: v });
+                      onBeforeInput={(e) => {
+                        const el = e.currentTarget;
+                        const start = el.selectionStart ?? el.value.length;
+                        const end = el.selectionEnd ?? el.value.length;
+                        const data = (e as any).data ?? '';
+                        const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                        if (!/^\d*$/.test(proposed)) e.preventDefault();
                       }}
+                      onPaste={(e) => {
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        if (!/^\d*$/.test(paste)) e.preventDefault();
+                      }}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stockweb: e.target.value })}
                       className="w-full border rounded px-2 py-2"
                       placeholder="0"
                       aria-label="Stock inicial Web"
@@ -714,10 +839,19 @@ export const StockManager = () => {
                       type="text"
                       inputMode="numeric"
                       value={editingProduct?.stockml ?? ''}
-                      onChange={(e) => {
-                        const v = e.target.value.trim();
-                        if (intLikeNonNeg(v)) setEditingProduct({ ...editingProduct, stockml: v });
+                      onBeforeInput={(e) => {
+                        const el = e.currentTarget;
+                        const start = el.selectionStart ?? el.value.length;
+                        const end = el.selectionEnd ?? el.value.length;
+                        const data = (e as any).data ?? '';
+                        const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                        if (!/^\d*$/.test(proposed)) e.preventDefault();
                       }}
+                      onPaste={(e) => {
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        if (!/^\d*$/.test(paste)) e.preventDefault();
+                      }}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stockml: e.target.value })}
                       className="w-full border rounded px-2 py-2"
                       placeholder="0"
                       aria-label="Stock inicial ML"
