@@ -18,7 +18,19 @@ type Product = {
 type SortField = 'name' | 'sku' | 'categoria' | 'price' | 'stockb2b' | 'stockweb' | 'stockml';
 type SortOrder = 'asc' | 'desc';
 
+// ---------- Helpers de validación/parseo para inputs numéricos ----------
+const intLike = (s: string) => s === '' || s === '-' || /^-?\d+$/.test(s);     // permite negativos al editar
+const intLikeNonNeg = (s: string) => s === '' || /^\d+$/.test(s);              // solo no-negativos (crear)
+const toInt = (s: unknown) => {
+  const n = parseInt(String(s ?? '').replace(/\s+/g, ''), 10);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// ---------- Umbral de "Low Stock" por canal ----------
+const LOW_STOCK_THRESHOLD = 10;
+
 export const StockManager = () => {
+  // Categorías (puedes cargar de BD si quieres)
   const CATEGORIES = ['Ropa','Pantalones','Shorts','Poleras','Polerones','Gorros','Accesorios','Chaquetas','Poleras manga larga'];
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -29,6 +41,7 @@ export const StockManager = () => {
   const [loading, setLoading] = useState(true);
   const [sorting, setSorting] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string>('');
+
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [isExistingSKU, setIsExistingSKU] = useState<boolean>(false);
@@ -38,19 +51,23 @@ export const StockManager = () => {
 
   const abortRef = useRef<AbortController | null>(null);
 
-  const toastAndLog = (msg: string, type: 'info' | 'error' | 'sync' = 'info') => {
+  // ---------- Toast + persistencia en alerts ----------
+  const toastAndLog = (msg: string, type: 'info' | 'error' | 'sync' | 'low-stock' = 'info') => {
     if (type === 'error') toast.error(msg);
     else if (type === 'sync') toast.success(msg);
+    else if (type === 'low-stock') toast(msg, { icon: '⚠️' });
     else toast(msg, { icon: 'ℹ️' });
     emitAlert({ type, message: msg, channel: 'stock' });
   };
 
+  // ---------- Fetch productos (con orden dinámico y modo "silent") ----------
   const fetchProducts = async (
     field: SortField = sortField,
     order: SortOrder = sortOrder,
     opts: { silent?: boolean } = {}
   ) => {
     const { silent = false } = opts;
+
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -108,6 +125,7 @@ export const StockManager = () => {
     void fetchProducts(field, nextOrder, { silent: true });
   };
 
+  // ---------- Filtrado local ----------
   const filteredProducts = products.filter((product) => {
     const matchesSearch =
       product.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -118,6 +136,7 @@ export const StockManager = () => {
     return matchesSearch && matchesCategory;
   });
 
+  // ---------- Utilidades UI ----------
   const formatPrice = (price: number) =>
     new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(price);
 
@@ -135,6 +154,7 @@ export const StockManager = () => {
     else setSelectedIds(filteredProducts.map((p) => p.id));
   };
 
+  // ---------- Eliminar seleccionados ----------
   const deleteSelected = async () => {
     if (selectedIds.length === 0) return toast.error('No hay productos seleccionados.');
     if (!confirm(`¿Eliminar ${selectedIds.length} producto(s)?`)) return;
@@ -154,6 +174,7 @@ export const StockManager = () => {
     }
   };
 
+  // ---------- Buscar SKU al salir del input ----------
   const handleSKUBlur = async () => {
     const sku = editingProduct?.sku?.toString()?.trim();
     if (!sku) return;
@@ -168,6 +189,7 @@ export const StockManager = () => {
       if (error) throw error;
 
       if (data) {
+        // SKU existente -> deltas como string (permiten "-")
         setIsExistingSKU(true);
         setEditingProduct({
           id: Number(data.id),
@@ -177,15 +199,21 @@ export const StockManager = () => {
           categoria: data.categoria ?? '',
           _originalstockb2b: Number(data.stockb2b) || 0,
           _originalstockweb: Number(data.stockweb) || 0,
-          _originalstockml: Number(data.stockml) || 0,
-          stockb2b: 0,
-          stockweb: 0,
-          stockml: 0,
+          _originalstockml:  Number(data.stockml)  || 0,
+          stockb2b: '',
+          stockweb: '',
+          stockml:  '',
         });
-        toastAndLog(`SKU encontrado: ${data.name} (SKU ${data.sku}) — solo suma de stock habilitada`, 'info');
+        toastAndLog(`SKU encontrado: ${data.name} (SKU ${data.sku}) — solo suma/resta de stock habilitada`, 'info');
       } else {
+        // SKU nuevo -> stocks iniciales como string no-negativa
         setIsExistingSKU(false);
-        setEditingProduct((prev: any) => ({ ...prev, stockb2b: 0, stockweb: 0, stockml: 0 }));
+        setEditingProduct((prev: any) => ({
+          ...prev,
+          stockb2b: '',
+          stockweb: '',
+          stockml:  ''
+        }));
         toastAndLog(`SKU no encontrado: ${sku} — completa los datos para crear nuevo producto`, 'info');
       }
     } catch (err) {
@@ -194,18 +222,20 @@ export const StockManager = () => {
     }
   };
 
+  // ---------- Guardar (insert/update) ----------
   const saveProduct = async () => {
     if (!editingProduct?.sku) return toast.error('El SKU es obligatorio.');
 
     try {
       if (isExistingSKU) {
+        // EDITAR: deltas (permiten negativos)
         const origB2B = Number(editingProduct._originalstockb2b || 0);
         const origWeb = Number(editingProduct._originalstockweb || 0);
-        const origMl = Number(editingProduct._originalstockml || 0);
+        const origMl  = Number(editingProduct._originalstockml  || 0);
 
-        const deltaB2B = Number(editingProduct.stockb2b || 0);
-        const deltaWeb = Number(editingProduct.stockweb || 0);
-        const deltaMl = Number(editingProduct.stockml || 0);
+        const deltaB2B = toInt(editingProduct.stockb2b);
+        const deltaWeb = toInt(editingProduct.stockweb);
+        const deltaMl  = toInt(editingProduct.stockml);
 
         if (deltaB2B === 0 && deltaWeb === 0 && deltaMl === 0) {
           return toast.error('No ingresaste ningún cambio de stock.');
@@ -214,7 +244,7 @@ export const StockManager = () => {
         const nuevos = {
           stockb2b: origB2B + deltaB2B,
           stockweb: origWeb + deltaWeb,
-          stockml: origMl + deltaMl,
+          stockml:  origMl  + deltaMl,
         };
 
         if (nuevos.stockb2b < 0 || nuevos.stockweb < 0 || nuevos.stockml < 0) {
@@ -223,9 +253,19 @@ export const StockManager = () => {
 
         let res;
         if (editingProduct?.id) {
-          res = await supabase.from('productos').update(nuevos).eq('id', Number(editingProduct.id)).select().maybeSingle();
+          res = await supabase
+            .from('productos')
+            .update(nuevos)
+            .eq('id', Number(editingProduct.id))
+            .select()
+            .maybeSingle();
         } else {
-          res = await supabase.from('productos').update(nuevos).eq('sku', editingProduct.sku.toString().trim()).select().maybeSingle();
+          res = await supabase
+            .from('productos')
+            .update(nuevos)
+            .eq('sku', editingProduct.sku.toString().trim())
+            .select()
+            .maybeSingle();
         }
 
         const { data, error } = res;
@@ -236,32 +276,46 @@ export const StockManager = () => {
         if (!data) return toastAndLog('No se actualizó ninguna fila (SKU o ID no encontrado).', 'error');
 
         const name = editingProduct?.name || data.name || '(sin nombre)';
-        const sku = editingProduct?.sku || data.sku;
-        const totalAntes = origB2B + origWeb + origMl;
+        const sku  = editingProduct?.sku  || data.sku;
+        const totalAntes   = origB2B + origWeb + origMl;
         const totalDespues = nuevos.stockb2b + nuevos.stockweb + nuevos.stockml;
 
         toastAndLog(
           `Stock actualizado: ${name} (SKU ${sku}) • B2B ${origB2B}→${nuevos.stockb2b} | Web ${origWeb}→${nuevos.stockweb} | ML ${origMl}→${nuevos.stockml} • Total ${totalAntes}→${totalDespues}`,
           'sync'
         );
-      } else {
-        const name = (editingProduct.name || '').toString().trim();
-        const price = Number(editingProduct.price || 0);
-        const categoria = (editingProduct.categoria || '').toString().trim();
 
-        if (!name || !editingProduct.sku || !categoria || !price) {
+        // ---- LOW STOCK: detectar cruce de umbral (de >=TH a <TH) y alertar por canal ----
+        const crossedB2B = (origB2B >= LOW_STOCK_THRESHOLD) && (nuevos.stockb2b < LOW_STOCK_THRESHOLD);
+        const crossedWeb = (origWeb >= LOW_STOCK_THRESHOLD) && (nuevos.stockweb < LOW_STOCK_THRESHOLD);
+        const crossedML  = (origMl  >= LOW_STOCK_THRESHOLD) && (nuevos.stockml  < LOW_STOCK_THRESHOLD);
+
+        if (crossedB2B) {
+          toastAndLog(`Low Stock B2B: ${name} (SKU ${sku}) — B2B: ${nuevos.stockb2b}`, 'low-stock');
+        }
+        if (crossedWeb) {
+          toastAndLog(`Low Stock Web: ${name} (SKU ${sku}) — Web: ${nuevos.stockweb}`, 'low-stock');
+        }
+        if (crossedML) {
+          toastAndLog(`Low Stock ML: ${name} (SKU ${sku}) — ML: ${nuevos.stockml}`, 'low-stock');
+        }
+
+      } else {
+        // CREAR: stocks iniciales (solo no-negativos)
+        const name = (editingProduct.name || '').toString().trim();
+        const price = Number(toInt(editingProduct.price));
+        const categoria = (editingProduct.categoria || '').toString().trim();
+        const sku = editingProduct.sku.toString().trim();
+
+        if (!name || !sku || !categoria || !price) {
           return toast.error('Completa nombre, SKU, precio y categoría.');
         }
 
-        const newProd = {
-          name,
-          sku: editingProduct.sku.toString().trim(),
-          price,
-          categoria,
-          stockb2b: Number(editingProduct.stockb2b || 0),
-          stockweb: Number(editingProduct.stockweb || 0),
-          stockml: Number(editingProduct.stockml || 0),
-        };
+        const sB2B = Math.max(0, toInt(editingProduct.stockb2b));
+        const sWeb = Math.max(0, toInt(editingProduct.stockweb));
+        const sML  = Math.max(0, toInt(editingProduct.stockml));
+
+        const newProd = { name, sku, price, categoria, stockb2b: sB2B, stockweb: sWeb, stockml: sML };
 
         const { error } = await supabase.from('productos').insert(newProd);
         if (error) {
@@ -269,8 +323,19 @@ export const StockManager = () => {
           return toastAndLog(error.message || 'Error al crear producto.', 'error');
         }
 
-        const total = newProd.stockb2b + newProd.stockweb + newProd.stockml;
-        toastAndLog(`Producto creado: ${newProd.name} (SKU ${newProd.sku}) • B2B ${newProd.stockb2b} | Web ${newProd.stockweb} | ML ${newProd.stockml} • Total ${total}`, 'sync');
+        const total = sB2B + sWeb + sML;
+        toastAndLog(`Producto creado: ${newProd.name} (SKU ${newProd.sku}) • B2B ${sB2B} | Web ${sWeb} | ML ${sML} • Total ${total}`, 'sync');
+
+        // ---- LOW STOCK inicial por canal ----
+        if (sB2B < LOW_STOCK_THRESHOLD) {
+          toastAndLog(`Low Stock B2B: ${newProd.name} (SKU ${newProd.sku}) — B2B: ${sB2B}`, 'low-stock');
+        }
+        if (sWeb < LOW_STOCK_THRESHOLD) {
+          toastAndLog(`Low Stock Web: ${newProd.name} (SKU ${newProd.sku}) — Web: ${sWeb}`, 'low-stock');
+        }
+        if (sML < LOW_STOCK_THRESHOLD) {
+          toastAndLog(`Low Stock ML: ${newProd.name} (SKU ${newProd.sku}) — ML: ${sML}`, 'low-stock');
+        }
       }
     } catch (err) {
       console.error('Error en saveProduct:', err);
@@ -283,20 +348,23 @@ export const StockManager = () => {
     }
   };
 
+  // ---------- Abrir modales ----------
   const openAddModal = () => {
-    setEditingProduct({ sku: '', stockb2b: 0, stockweb: 0, stockml: 0, categoria: '' });
+    setEditingProduct({ sku: '', name: '', price: '', categoria: '', stockb2b: '', stockweb: '', stockml: '' });
     setIsExistingSKU(false);
     setShowModal(true);
   };
+
   const openEditModal = (p: Product) => {
     setEditingProduct({
       ...p,
       _originalstockb2b: Number(p.stockb2b || 0),
       _originalstockweb: Number(p.stockweb || 0),
-      _originalstockml: Number(p.stockml || 0),
-      stockb2b: 0,
-      stockweb: 0,
-      stockml: 0,
+      _originalstockml:  Number(p.stockml  || 0),
+      // deltas como string
+      stockb2b: '',
+      stockweb: '',
+      stockml:  '',
     });
     setIsExistingSKU(true);
     setShowModal(true);
@@ -325,9 +393,15 @@ export const StockManager = () => {
             onChange={(e) => setSearchTerm(e.target.value)}
             className="border rounded px-3 py-2"
           />
-          <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="border rounded px-3 py-2">
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="border rounded px-3 py-2"
+          >
             <option value="all">Todas las categorías</option>
-            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            {CATEGORIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
           </select>
 
           <button onClick={openAddModal} className="bg-green-600 text-white px-4 py-2 rounded flex items-center gap-2">
@@ -367,7 +441,11 @@ export const StockManager = () => {
                 { label: 'Web', key: 'stockweb' as SortField, align: 'text-center' },
                 { label: 'ML', key: 'stockml' as SortField, align: 'text-center' },
               ].map(({ label, key, align }) => (
-                <th key={key} className={`py-3 px-4 ${align} cursor-pointer select-none`} onClick={() => handleSort(key)}>
+                <th
+                  key={key}
+                  className={`py-3 px-4 ${align} cursor-pointer select-none`}
+                  onClick={() => handleSort(key)}
+                >
                   <div className="inline-flex items-center gap-1">
                     <span>{label}</span>
                     {sortField === key && <span className="text-neutral-500">{sortOrder === 'asc' ? '▲' : '▼'}</span>}
@@ -432,12 +510,20 @@ export const StockManager = () => {
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-lg w-full max-w-lg relative p-6">
-            <button className="absolute top-3 right-3 text-neutral-500"
-              onClick={() => { setShowModal(false); setEditingProduct(null); setIsExistingSKU(false); }}>
+            <button
+              className="absolute top-3 right-3 text-neutral-500"
+              onClick={() => {
+                setShowModal(false);
+                setEditingProduct(null);
+                setIsExistingSKU(false);
+              }}
+            >
               <X size={18} />
             </button>
 
-            <h3 className="text-lg font-semibold mb-3">{isExistingSKU ? 'Actualizar stock por SKU' : 'Agregar producto nuevo'}</h3>
+            <h3 className="text-lg font-semibold mb-3">
+              {isExistingSKU ? 'Actualizar stock por SKU' : 'Agregar producto nuevo'}
+            </h3>
 
             {/* SKU */}
             <div className="mb-3">
@@ -453,67 +539,191 @@ export const StockManager = () => {
 
             {isExistingSKU ? (
               <>
-                <div className="mb-2 text-sm text-neutral-600"><strong>Nombre:</strong> {editingProduct?.name}</div>
-                <div className="mb-2 text-sm text-neutral-600"><strong>Precio:</strong> {formatPrice(Number(editingProduct?.price || 0))}</div>
-                <div className="mb-2 text-sm text-neutral-600"><strong>Categoría:</strong> {editingProduct?.categoria || '—'}</div>
+                {/* Datos solo lectura */}
+                <div className="mb-2 text-sm text-neutral-600">
+                  <strong>Nombre:</strong> {editingProduct?.name}
+                </div>
+                <div className="mb-2 text-sm text-neutral-600">
+                  <strong>Precio:</strong> {formatPrice(Number(editingProduct?.price || 0))}
+                </div>
+                <div className="mb-2 text-sm text-neutral-600">
+                  <strong>Categoría:</strong> {editingProduct?.categoria || '—'}
+                </div>
 
-                <div className="grid grid-cols-3 gap-2 mt-3">
+                {/* Deltas con "-" permitido */}
+                <div className="grid grid-cols-3 gap-3 mt-3">
+                  {/* B2B */}
                   <div>
-                    <div className="text-xs text-neutral-500 mb-1">Actual: {editingProduct?._originalstockb2b ?? 0}</div>
-                    <input type="number" value={editingProduct?.stockb2b ?? 0}
-                      onChange={(e) => setEditingProduct({ ...editingProduct, stockb2b: Number(e.target.value) })}
-                      className="w-full border rounded px-2 py-2" placeholder="Agregar B2B" />
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                      Sumar a <span className="px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 text-[10px]">B2B</span>
+                    </label>
+                    <div className="text-xs text-neutral-500 mb-1">
+                      Actual: <strong>{editingProduct?._originalstockb2b ?? 0}</strong>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editingProduct?.stockb2b ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value.trim();
+                        if (intLike(v)) setEditingProduct({ ...editingProduct, stockb2b: v });
+                      }}
+                      className="w-full border rounded px-2 py-2"
+                      placeholder="Ej: -2 o 5"
+                      aria-label="Cantidad a sumar al stock B2B"
+                      title="Cantidad a sumar al stock B2B (puede ser negativa para restar)"
+                    />
+                    <p className="mt-1 text-[11px] text-neutral-500">Usa valores positivos para sumar y negativos para restar.</p>
                   </div>
+
+                  {/* Web */}
                   <div>
-                    <div className="text-xs text-neutral-500 mb-1">Actual: {editingProduct?._originalstockweb ?? 0}</div>
-                    <input type="number" value={editingProduct?.stockweb ?? 0}
-                      onChange={(e) => setEditingProduct({ ...editingProduct, stockweb: Number(e.target.value) })}
-                      className="w-full border rounded px-2 py-2" placeholder="Agregar Web" />
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                      Sumar a <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px]">Web</span>
+                    </label>
+                    <div className="text-xs text-neutral-500 mb-1">
+                      Actual: <strong>{editingProduct?._originalstockweb ?? 0}</strong>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editingProduct?.stockweb ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value.trim();
+                        if (intLike(v)) setEditingProduct({ ...editingProduct, stockweb: v });
+                      }}
+                      className="w-full border rounded px-2 py-2"
+                      placeholder="Ej: -1 o 3"
+                      aria-label="Cantidad a sumar al stock Web"
+                      title="Cantidad a sumar al stock Web (puede ser negativa para restar)"
+                    />
+                    <p className="mt-1 text-[11px] text-neutral-500">Suma o resta stock publicado en tu sitio.</p>
                   </div>
+
+                  {/* ML */}
                   <div>
-                    <div className="text-xs text-neutral-500 mb-1">Actual: {editingProduct?._originalstockml ?? 0}</div>
-                    <input type="number" value={editingProduct?.stockml ?? 0}
-                      onChange={(e) => setEditingProduct({ ...editingProduct, stockml: Number(e.target.value) })}
-                      className="w-full border rounded px-2 py-2" placeholder="Agregar ML" />
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                      Sumar a <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px]">ML</span>
+                    </label>
+                    <div className="text-xs text-neutral-500 mb-1">
+                      Actual: <strong>{editingProduct?._originalstockml ?? 0}</strong>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editingProduct?.stockml ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value.trim();
+                        if (intLike(v)) setEditingProduct({ ...editingProduct, stockml: v });
+                      }}
+                      className="w-full border rounded px-2 py-2"
+                      placeholder="Ej: -3 o 2"
+                      aria-label="Cantidad a sumar al stock ML"
+                      title="Cantidad a sumar al stock ML (puede ser negativa para restar)"
+                    />
+                    <p className="mt-1 text-[11px] text-neutral-500">Stock en Mercado Libre.</p>
                   </div>
                 </div>
               </>
             ) : (
               <>
+                {/* Crear producto */}
                 <div className="mb-3">
                   <label className="block text-sm text-neutral-600 mb-1">Nombre</label>
-                  <input type="text" value={editingProduct?.name || ''}
+                  <input
+                    type="text"
+                    value={editingProduct?.name || ''}
                     onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
-                    className="w-full border rounded px-3 py-2" />
+                    className="w-full border rounded px-3 py-2"
+                  />
                 </div>
 
                 <div className="mb-3">
                   <label className="block text-sm text-neutral-600 mb-1">Precio</label>
-                  <input type="number" value={editingProduct?.price ?? ''}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, price: Number(e.target.value) })}
-                    className="w-full border rounded px-3 py-2" />
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={editingProduct?.price ?? ''}
+                    onChange={(e) => {
+                      const v = e.target.value.trim();
+                      if (intLikeNonNeg(v)) setEditingProduct({ ...editingProduct, price: v });
+                    }}
+                    className="w-full border rounded px-3 py-2"
+                  />
                 </div>
 
                 <div className="mb-3">
                   <label className="block text-sm text-neutral-600 mb-1">Categoría</label>
-                  <select value={editingProduct?.categoria ?? ''}
+                  <select
+                    value={editingProduct?.categoria ?? ''}
                     onChange={(e) => setEditingProduct({ ...editingProduct, categoria: e.target.value })}
-                    className="w-full border rounded px-3 py-2">
+                    className="w-full border rounded px-3 py-2"
+                  >
                     <option value="">Seleccionar categoría</option>
-                    {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                    {CATEGORIES.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
                   </select>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
-                  <input type="number" value={editingProduct?.stockb2b ?? 0}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, stockb2b: Number(e.target.value) })}
-                    className="w-full border rounded px-2 py-2" placeholder="Stock B2B" />
-                  <input type="number" value={editingProduct?.stockweb ?? 0}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, stockweb: Number(e.target.value) })}
-                    className="w-full border rounded px-2 py-2" placeholder="Stock Web" />
-                  <input type="number" value={editingProduct?.stockml ?? 0}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, stockml: Number(e.target.value) })}
-                    className="w-full border rounded px-2 py-2" placeholder="Stock ML" />
+                {/* Stocks iniciales no-negativos */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                      Stock inicial <span className="px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 text-[10px]">B2B</span>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editingProduct?.stockb2b ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value.trim();
+                        if (intLikeNonNeg(v)) setEditingProduct({ ...editingProduct, stockb2b: v });
+                      }}
+                      className="w-full border rounded px-2 py-2"
+                      placeholder="0"
+                      aria-label="Stock inicial B2B"
+                      title="Stock inicial para canal B2B"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                      Stock inicial <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px]">Web</span>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editingProduct?.stockweb ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value.trim();
+                        if (intLikeNonNeg(v)) setEditingProduct({ ...editingProduct, stockweb: v });
+                      }}
+                      className="w-full border rounded px-2 py-2"
+                      placeholder="0"
+                      aria-label="Stock inicial Web"
+                      title="Stock inicial para canal Web"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                      Stock inicial <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px]">ML</span>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editingProduct?.stockml ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value.trim();
+                        if (intLikeNonNeg(v)) setEditingProduct({ ...editingProduct, stockml: v });
+                      }}
+                      className="w-full border rounded px-2 py-2"
+                      placeholder="0"
+                      aria-label="Stock inicial ML"
+                      title="Stock inicial para canal Mercado Libre"
+                    />
+                  </div>
                 </div>
               </>
             )}
@@ -522,7 +732,14 @@ export const StockManager = () => {
               <button onClick={saveProduct} className="bg-green-600 text-white px-4 py-2 rounded">
                 {isExistingSKU ? 'Actualizar stock' : 'Guardar producto'}
               </button>
-              <button onClick={() => { setShowModal(false); setEditingProduct(null); setIsExistingSKU(false); }} className="border px-4 py-2 rounded">
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  setEditingProduct(null);
+                  setIsExistingSKU(false);
+                }}
+                className="border px-4 py-2 rounded"
+              >
                 Cancelar
               </button>
             </div>

@@ -1,39 +1,36 @@
-// src/state/alertsBus.ts
 import { supabase } from '../supabaseClient';
 
 export type AppAlertType = 'low-stock' | 'error' | 'sync' | 'info';
-
 export type AppAlert = {
   id: string;
   type: AppAlertType;
   message: string;
-  date: string;     // para UI
-  read: boolean;
   channel?: string;
+  read: boolean;
 };
 
-export async function emitAlert(
-  payload: { type: AppAlertType; message: string; channel?: string; read?: boolean }
-) {
-  const uiAlert: AppAlert = {
-    id: crypto.randomUUID(),
-    date: new Date().toLocaleString(),
-    read: payload.read ?? false,
+export const emitAlert = async (payload: { type: AppAlertType; message: string; channel?: string }) => {
+  const { data } = await supabase.from('alerts').insert({
     type: payload.type,
     message: payload.message,
-    channel: payload.channel,
-  };
+    channel: payload.channel ?? 'general',
+    read: false
+  }).select('id').maybeSingle();
 
-  // 1) disparo UI inmediato
-  window.dispatchEvent(new CustomEvent<AppAlert>('app:alert', { detail: uiAlert }));
+  // Notifica a la app (Alerts.tsx injecta optimista)
+  window.dispatchEvent(
+    new CustomEvent<AppAlert>('app:alert', {
+      detail: {
+        id: data?.id ?? crypto.randomUUID(),
+        type: payload.type,
+        message: payload.message,
+        channel: payload.channel ?? 'general',
+        read: false
+      }
+    })
+  );
+};
 
-  // 2) persistencia en Supabase
-  await supabase.from('alerts').insert({
-    type: payload.type,
-    message: payload.message,
-    channel: payload.channel ?? null,
-    read: payload.read ?? false
-  });
-
-  return uiAlert;
-}
+export const emitAlertsRefresh = () => {
+  window.dispatchEvent(new CustomEvent('alerts:refresh'));
+};
