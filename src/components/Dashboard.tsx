@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabaseClient';
+import { wooSyncDown } from "../data/woo";
 import {
   TrendingUp,
   Package,
@@ -50,6 +51,19 @@ export const Dashboard = () => {
   // Paginación local de alertas
   const [alertPage, setAlertPage] = useState(1);
   const [alertPageSize, setAlertPageSize] = useState(10);
+
+  const [syncing, setSyncing] = useState(false);
+
+async function syncAndReload() {
+  setSyncing(true);
+  try {
+    await wooSyncDown();   // baja desde Woo y escribe en productos.stockweb
+    await fetchProducts(); // ya lo tienes, recarga métricas/cards
+  } finally {
+    setSyncing(false);
+  }
+}
+
 
   // Umbral bajo stock (por canal)
   const THRESHOLD = 10;
@@ -261,6 +275,14 @@ export const Dashboard = () => {
               </LineChart>
             </ResponsiveContainer>
           </div>
+            <button
+              onClick={syncAndReload}
+              disabled={syncing}
+              className="px-3 py-2 rounded bg-slate-800 text-white disabled:opacity-60"
+              title="Sincronizar con WooCommerce"
+            >
+              {syncing ? "Sync..." : "Sincronizar"}
+            </button>
         </div>
 
         {/* ML */}

@@ -3,6 +3,7 @@ import { Plus, Pencil, Trash2, X, ChevronsLeft, ChevronLeft, ChevronRight, Chevr
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import { emitAlert } from '../state/alertsBus';
+import { wooCreateProductLocal, wooPushStockLocal } from '../data/woo';
 
 type Product = {
   id: number;
@@ -99,7 +100,6 @@ export const StockManager = () => {
       // Búsqueda por nombre o SKU
       if (debouncedSearch) {
         const term = debouncedSearch.replace(/%/g, '').toLowerCase();
-        // or() agrupa condiciones OR y se combina con los otros filtros mediante AND
         query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%`);
       }
 
@@ -156,7 +156,6 @@ export const StockManager = () => {
 
   // Refetch cuando cambian filtros/orden/paginación
   useEffect(() => {
-    // Si se cambia filtro o búsqueda, vuelve a la primera página
     setPage(1);
   }, [categoryFilter, debouncedSearch, pageSize]);
 
@@ -172,7 +171,7 @@ export const StockManager = () => {
     setSortOrder(nextOrder);
   };
 
-  // ---------- Filtrado local (ya no filtra datos; solo muestra contadores si necesitas) ----------
+  // ---------- Filtrado local ----------
   const stockTotal = (p: Product) => (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0);
 
   // ---------- Utilidades UI ----------
@@ -214,7 +213,6 @@ export const StockManager = () => {
       );
       toast.success('Productos eliminados correctamente.');
 
-      // Si la página queda vacía tras borrar, retrocede una página
       const remaining = totalRows - selectedIds.length;
       const lastPage = Math.max(1, Math.ceil(remaining / pageSize));
       if (page > lastPage) setPage(lastPage);
@@ -273,102 +271,135 @@ export const StockManager = () => {
 
   // ---------- Guardar (insert/update) ----------
   const saveProduct = async () => {
-    if (!editingProduct?.sku) return toast.error('El SKU es obligatorio.');
+  if (!editingProduct?.sku) return toast.error('El SKU es obligatorio.');
 
-    try {
-      if (isExistingSKU) {
-        // EDITAR: deltas (permiten negativos)
-        const origB2B = Number(editingProduct._originalstockb2b || 0);
-        const origWeb = Number(editingProduct._originalstockweb || 0);
-        const origMl  = Number(editingProduct._originalstockml  || 0);
+  try {
+    if (isExistingSKU) {
+      // -------- EDITAR: deltas (permiten negativos)
+      const origB2B = Number(editingProduct._originalstockb2b || 0);
+      const origWeb = Number(editingProduct._originalstockweb || 0);
+      const origMl  = Number(editingProduct._originalstockml  || 0);
 
-        const deltaB2B = toInt(editingProduct.stockb2b);
-        const deltaWeb = toInt(editingProduct.stockweb);
-        const deltaMl  = toInt(editingProduct.stockml);
+      const deltaB2B = toInt(editingProduct.stockb2b);
+      const deltaWeb = toInt(editingProduct.stockweb);
+      const deltaMl  = toInt(editingProduct.stockml);
 
-        if (deltaB2B === 0 && deltaWeb === 0 && deltaMl === 0) {
-          return toast.error('No ingresaste ningún cambio de stock.');
-        }
-
-        const nuevos = {
-          stockb2b: origB2B + deltaB2B,
-          stockweb: origWeb + deltaWeb,
-          stockml:  origMl  + deltaMl,
-        };
-
-        if (nuevos.stockb2b < 0 || nuevos.stockweb < 0 || nuevos.stockml < 0) {
-          return toast.error('El stock no puede quedar negativo.');
-        }
-
-        let res;
-        if (editingProduct?.id) {
-          res = await supabase
-            .from('productos')
-            .update(nuevos)
-            .eq('id', Number(editingProduct.id))
-            .select()
-            .maybeSingle();
-        } else {
-          res = await supabase
-            .from('productos')
-            .update(nuevos)
-            .eq('sku', editingProduct.sku.toString().trim())
-            .select()
-            .maybeSingle();
-        }
-
-        const { data, error } = res;
-        if (error) {
-          console.error('Error al actualizar stock:', error);
-          return toastAndLog(error.message || 'Error al actualizar stock.', 'error');
-        }
-        if (!data) return toastAndLog('No se actualizó ninguna fila (SKU o ID no encontrado).', 'error');
-
-        const name = editingProduct?.name || data.name || '(sin nombre)';
-        const sku  = editingProduct?.sku  || data.sku;
-        const totalAntes   = origB2B + origWeb + origMl;
-        const totalDespues = nuevos.stockb2b + nuevos.stockweb + nuevos.stockml;
-
-        toastAndLog(
-          `Stock actualizado: ${name} (SKU ${sku}) • B2B ${origB2B}→${nuevos.stockb2b} | Web ${origWeb}→${nuevos.stockweb} | ML ${origMl}→${nuevos.stockml} • Total ${totalAntes}→${totalDespues}`,
-          'sync'
-        );
-      } else {
-        // CREAR: stocks iniciales (solo no-negativos)
-        const name = (editingProduct.name || '').toString().trim();
-        const price = toInt(editingProduct.price);
-        const categoria = (editingProduct.categoria || '').toString().trim();
-        const sku = editingProduct.sku.toString().trim();
-
-        if (!name || !sku || !categoria || !price) {
-          return toast.error('Completa nombre, SKU, precio y categoría.');
-        }
-
-        const sB2B = Math.max(0, toInt(editingProduct.stockb2b));
-        const sWeb = Math.max(0, toInt(editingProduct.stockweb));
-        const sML  = Math.max(0, toInt(editingProduct.stockml));
-
-        const newProd = { name, sku, price, categoria, stockb2b: sB2B, stockweb: sWeb, stockml: sML };
-
-        const { error } = await supabase.from('productos').insert(newProd);
-        if (error) {
-          console.error('Error al crear producto:', error);
-          return toastAndLog(error.message || 'Error al crear producto.', 'error');
-        }
-
-        const total = sB2B + sWeb + sML;
-        toastAndLog(`Producto creado: ${newProd.name} (SKU ${newProd.sku}) • B2B ${sB2B} | Web ${sWeb} | ML ${sML} • Total ${total}`, 'sync');
+      if (deltaB2B === 0 && deltaWeb === 0 && deltaMl === 0) {
+        return toast.error('No ingresaste ningún cambio de stock.');
       }
-    } catch (err) {
-      console.error('Error en saveProduct:', err);
-      toastAndLog('Error en la operación.', 'error');
-    } finally {
-      setShowModal(false);
-      setEditingProduct(null);
-      setIsExistingSKU(false);
-      fetchProducts({ silent: true });
+
+      const nuevos = {
+        stockb2b: origB2B + deltaB2B,
+        stockweb: origWeb + deltaWeb,
+        stockml:  origMl  + deltaMl,
+      };
+
+      if (nuevos.stockb2b < 0 || nuevos.stockweb < 0 || nuevos.stockml < 0) {
+        return toast.error('El stock no puede quedar negativo.');
+      }
+
+      let res;
+      if (editingProduct?.id) {
+        res = await supabase
+          .from('productos')
+          .update(nuevos)
+          .eq('id', Number(editingProduct.id))
+          .select()
+          .maybeSingle();
+      } else {
+        res = await supabase
+          .from('productos')
+          .update(nuevos)
+          .eq('sku', editingProduct.sku.toString().trim())
+          .select()
+          .maybeSingle();
+      }
+
+      const { data, error } = res;
+      if (error) {
+        console.error('Error al actualizar stock:', error);
+        return toastAndLog(error.message || 'Error al actualizar stock.', 'error');
+      }
+      if (!data) return toastAndLog('No se actualizó ninguna fila (SKU o ID no encontrado).', 'error');
+
+      // 🔗 Empuja a Woo el stock absoluto del canal Web
+      try {
+        await wooPushStockLocal(String(editingProduct.sku), Number(nuevos.stockweb));
+      } catch (e) {
+        console.error("WC push error:", e);
+        toastAndLog("Guardado en BD, pero falló la sync con Woo.", "error");
+      }
+
+      const name = editingProduct?.name || data.name || '(sin nombre)';
+      const sku  = editingProduct?.sku  || data.sku;
+      const totalAntes   = origB2B + origWeb + origMl;
+      const totalDespues = nuevos.stockb2b + nuevos.stockweb + nuevos.stockml;
+
+      toastAndLog(
+        `Stock actualizado: ${name} (SKU ${sku}) • B2B ${origB2B}→${nuevos.stockb2b} | Web ${origWeb}→${nuevos.stockweb} | ML ${origMl}→${nuevos.stockml} • Total ${totalAntes}→${totalDespues}`,
+        'sync'
+      );
+
+    } else {
+      // -------- CREAR: stocks iniciales (solo no-negativos)
+      const name = (editingProduct.name || '').toString().trim();
+      const price = toInt(editingProduct.price);
+      const categoria = (editingProduct.categoria || '').toString().trim();
+      const sku = editingProduct.sku.toString().trim();
+
+      if (!name || !sku || !categoria || !price) {
+        return toast.error('Completa nombre, SKU, precio y categoría.');
+      }
+
+      const sB2B = Math.max(0, toInt(editingProduct.stockb2b));
+      const sWeb = Math.max(0, toInt(editingProduct.stockweb));
+      const sML  = Math.max(0, toInt(editingProduct.stockml));
+
+      const newProd = { name, sku, price, categoria, stockb2b: sB2B, stockweb: sWeb, stockml: sML };
+
+      // 1) Inserta en tu BD
+      const { error } = await supabase.from('productos').insert(newProd);
+      if (error) {
+        console.error('Error al crear producto:', error);
+        return toastAndLog(error.message || 'Error al crear producto.', 'error');
+      }
+
+      // 2) Crea/asegura en Woo + mapea wc_links + setea stock inicial
+      try {
+        const resWoo = await wooCreateProductLocal({
+          skuLocal: sku,          // SKU local
+          name,                   // nombre
+          price,                  // precio
+          initialStockWeb: sWeb,  // stock web inicial
+          // skuWoo: "SKU-DISTINTO-EN-WOO" // opcional si Woo usa otro SKU
+        });
+
+        // 3) Consistencia: empuja 1 vez el stock Web a Woo
+        await wooPushStockLocal(sku, sWeb);
+
+        toastAndLog(`Producto creado y sincronizado con Woo: ${name} (SKU Woo ${resWoo.skuWoo})`, 'sync');
+      } catch (e) {
+        console.error("Crear/Sync en Woo falló:", e);
+        toastAndLog("Producto creado en BD. No se pudo crear/actualizar en Woo.", "error");
+      }
+
+      const total = sB2B + sWeb + sML;
+      toastAndLog(
+        `Producto creado: ${newProd.name} (SKU ${newProd.sku}) • B2B ${sB2B} | Web ${sWeb} | ML ${sML} • Total ${total}`,
+        'sync'
+      );
     }
-  };
+  } catch (err) {
+    console.error('Error en saveProduct:', err);
+    toastAndLog('Error en la operación.', 'error');
+  } finally {
+    setShowModal(false);
+    setEditingProduct(null);
+    setIsExistingSKU(false);
+    fetchProducts({ silent: true });
+  }
+};
+
 
   // ---------- Abrir modales ----------
   const openAddModal = () => {
@@ -615,7 +646,7 @@ export const StockManager = () => {
                   <strong>Categoría:</strong> {editingProduct?.categoria || '—'}
                 </div>
 
-                {/* Deltas con "-" permitido — onBeforeInput/onPaste */}
+                {/* Deltas con "-" permitido */}
                 <div className="grid grid-cols-3 gap-3 mt-3">
                   {/* B2B */}
                   <div>
