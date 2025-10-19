@@ -7,6 +7,7 @@ import { PurchaseOrders } from './components/PurchaseOrders'
 import { Alerts } from './components/Alerts'
 import { Admin } from './components/Admin'
 import Login from './components/Login'
+import Web from './components/Web'
 
 type AppUser = {
   id: string
@@ -40,7 +41,7 @@ function App() {
       case 'stock':
         return <StockManager />
       case 'wordpress':
-        return <ChannelView channel="wordpress" />
+        return <Web />
       case 'mercadolibre':
         return <ChannelView channel="mercadolibre" />
       case 'orders':
