@@ -12,11 +12,17 @@ import {
   Trash2,
   Search,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  CheckCircle,
+  AlertCircle,
+  PlugZap,
+  Unplug,
+  KeyRound,
+  RefreshCw,
+  CalendarClock
 } from 'lucide-react'
 import { supabase } from '../supabaseClient'
 import { emitAlert } from '../state/alertsBus';
-
 
 const HIDDEN_USERNAMES = ['root'];
 type Role = 'admin' | 'manager' | 'viewer'
@@ -33,6 +39,14 @@ type Usuario = {
   email: string | null
   role: Role
   created_at?: string | null
+}
+
+type MLCreds = {
+  id?: string
+  access_token: string
+  refresh_token: string
+  expires_at: string // ISO
+  updated_at?: string
 }
 
 const USERNAME_RX = /^[a-zA-Z0-9._-]{3,32}$/
@@ -65,7 +79,6 @@ function assessPassword(pw: string): PwStrength {
   if (hasNumber) score++
   if (hasSymbol) score++
 
-  // normalizamos entre 0–4
   score = Math.min(4, Math.max(0, score - 1)) as 0|1|2|3|4
 
   if (length < 8) tips.push('Usa al menos 8 caracteres')
@@ -91,13 +104,12 @@ function strengthColor(score: number) {
        : 'bg-emerald-600'
 }
 
-
 export const Admin = ({ user }: AdminProps) => {
   const isAdmin = (user?.role ?? '').toLowerCase() === 'admin'
 
   const [showNotification, setShowNotification] = useState<string | null>(null)
 
-  // Modal de gestión
+  // Modal de gestión de usuarios
   const [modalOpen, setModalOpen] = useState(false)
   const [showForm, setShowForm] = useState(false)
 
@@ -132,22 +144,140 @@ export const Admin = ({ user }: AdminProps) => {
     setShowNotification(msg)
     setTimeout(() => setShowNotification(null), 2500)
   }
-
   const toastAndLog = (msg: string, type: 'info' | 'error' | 'sync' = 'info') => {
-
     setShowNotification(msg);
     setTimeout(() => setShowNotification(null), 2500);
-
-    // 2) Persistencia: guardamos el toast como "alerta"
-    emitAlert({
-      type,               // 'info' | 'error' | 'sync' | 'low-stock'
-      message: msg,       // el mismo texto del toast (incluye username)
-      channel: 'usuarios' // para filtrar por origen en Alerts
-    });
+    emitAlert({ type, message: msg, channel: 'usuarios' });
   };
 
+  // ======= MERCADO LIBRE: credenciales =======
+  const [mlLoading, setMlLoading] = useState(false);
+  const [mlCreds, setMlCreds] = useState<MLCreds | null>(null);
+  const [mlModalOpen, setMlModalOpen] = useState(false);
+  const [mlSaving, setMlSaving] = useState(false);
+  const [mlForm, setMlForm] = useState<MLCreds>({
+    access_token: '',
+    refresh_token: '',
+    expires_at: ''
+  });
 
-  // ------ DATA LOADER (server-side pagination + search) ------
+  const isMeliConnected = useMemo(() => {
+    if (!mlCreds?.access_token || !mlCreds?.expires_at) return false;
+    const exp = new Date(mlCreds.expires_at).getTime();
+    return Date.now() < exp - 2 * 60 * 1000; // margen 2 min
+  }, [mlCreds]);
+
+  const loadMlCreds = async () => {
+    setMlLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('ml_credentials')
+        .select('*')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      setMlCreds(data as any);
+      if (data) {
+        setMlForm({
+          access_token: data.access_token,
+          refresh_token: data.refresh_token,
+          expires_at: data.expires_at
+        });
+      } else {
+        setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
+      }
+    } catch (e: any) {
+      console.error('Error cargando ml_credentials:', e);
+      setMlCreds(null);
+    } finally {
+      setMlLoading(false);
+    }
+  };
+
+  const saveMlCreds = async () => {
+    if (!mlForm.access_token || !mlForm.refresh_token || !mlForm.expires_at) {
+      toast('Completa access_token, refresh_token y expires_at');
+      return;
+    }
+    setMlSaving(true);
+    try {
+      const payload = {
+        access_token: mlForm.access_token,
+        refresh_token: mlForm.refresh_token,
+        expires_at: new Date(mlForm.expires_at).toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await supabase.from('ml_credentials').upsert(payload, { onConflict: 'id' });
+      if (error) throw error;
+      emitAlert({ type: 'sync', message: 'Credenciales ML guardadas', channel: 'ml' });
+      await loadMlCreds();
+      setMlModalOpen(false);
+    } catch (e: any) {
+      console.error(e);
+      emitAlert({ type: 'error', message: `Error guardando credenciales ML: ${e.message || e}`, channel: 'ml' });
+    } finally {
+      setMlSaving(false);
+    }
+  };
+
+  const disconnectMl = async () => {
+    if (!confirm('¿Desconectar Mercado Libre? Se eliminarán las credenciales guardadas.')) return;
+    try {
+      const { error } = await supabase.from('ml_credentials').delete().neq('id', ''); // borra todas
+      if (error) throw error;
+      setMlCreds(null);
+      setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
+      emitAlert({ type: 'error', message: 'Mercado Libre desconectado', channel: 'ml' });
+    } catch (e: any) {
+      emitAlert({ type: 'error', message: `No se pudo desconectar: ${e.message || e}`, channel: 'ml' });
+    }
+  };
+
+  const startMeliOAuth = async () => {
+    // Edge function debe devolver { auth_url: string }
+    try {
+      const { data, error } = await supabase.functions.invoke('meli-oauth-start', {
+        body: {
+          // El callback debería vivir en tu app (p. ej. /oauth/meli/callback)
+          redirect_to: window.location.origin + '/oauth/meli/callback'
+        }
+      });
+      if (error) throw new Error(error.message || 'No se pudo iniciar OAuth');
+      const authUrl = (data as any)?.auth_url;
+      if (!authUrl) throw new Error('auth_url no recibido');
+      window.location.href = authUrl;
+    } catch (e: any) {
+      emitAlert({ type: 'error', message: `Error iniciando OAuth: ${e.message || e}`, channel: 'ml' });
+    }
+  };
+
+  const refreshMeliToken = async () => {
+    // Edge function que usa refresh_token y devuelve { access_token, refresh_token?, expires_in }
+    try {
+      const { data, error } = await supabase.functions.invoke('meli-refresh-token', {});
+      if (error) throw new Error(error.message || 'No se pudo refrescar token');
+
+      const { access_token, refresh_token, expires_in } = data as any;
+      const expires_at = new Date(Date.now() + Number(expires_in) * 1000).toISOString();
+
+      const up = {
+        access_token,
+        refresh_token: refresh_token || mlCreds?.refresh_token || '',
+        expires_at,
+        updated_at: new Date().toISOString()
+      };
+      const { error: upErr } = await supabase.from('ml_credentials').upsert(up, { onConflict: 'id' });
+      if (upErr) throw upErr;
+
+      emitAlert({ type: 'sync', message: 'Token ML actualizado', channel: 'ml' });
+      await loadMlCreds();
+    } catch (e: any) {
+      emitAlert({ type: 'error', message: `No se pudo actualizar el token: ${e.message || e}`, channel: 'ml' });
+    }
+  };
+
+  // ------ DATA LOADER USUARIOS ------
   const loadUsers = async (nextPage = page, currentSearch = search, currentPageSize = pageSize) => {
     setLoadingUsers(true)
     setErrorUsers(null)
@@ -160,7 +290,6 @@ export const Admin = ({ user }: AdminProps) => {
         .select('id, username, full_name, email, role, created_at', { count: 'exact' })
         .order('username', { ascending: true });
 
-      // 🚫 excluir reservados (server-side)
       for (const hidden of HIDDEN_USERNAMES) {
         query = query.neq('username', hidden);
       }
@@ -174,7 +303,6 @@ export const Admin = ({ user }: AdminProps) => {
       }
 
       query = query.range(from, to);
-
 
       const { data, count, error } = await query
       if (error) throw error
@@ -197,6 +325,11 @@ export const Admin = ({ user }: AdminProps) => {
     setPage(1)
     void loadUsers(1)
   }
+
+  useEffect(() => {
+    loadMlCreds();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!modalOpen) return
@@ -297,7 +430,6 @@ export const Admin = ({ user }: AdminProps) => {
         if (error) throw error
 
         toastAndLog(`Usuario creado: ${uname}`, 'sync');
-
       }
 
       const nextPage = page > totalPages ? totalPages : page
@@ -376,7 +508,84 @@ export const Admin = ({ user }: AdminProps) => {
           </button>
         </div>
 
-        {/* Placeholders restantes */}
+        {/* Credenciales Mercado Libre */}
+        <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 hover:shadow-lg transition-shadow">
+          <div className="flex items-center space-x-3 mb-4">
+            <div className="p-3 bg-yellow-100 text-yellow-700 rounded-lg">
+              <PlugZap size={24} />
+            </div>
+            <h3 className="text-lg font-bold text-neutral-900">Credenciales Mercado Libre</h3>
+          </div>
+
+          {mlLoading ? (
+            <p className="text-neutral-500">Cargando estado…</p>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 mb-2">
+                {isMeliConnected ? (
+                  <>
+                    <CheckCircle className="text-green-600" size={18} />
+                    <span className="text-green-700 font-semibold">Conectado</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="text-red-600" size={18} />
+                    <span className="text-red-700 font-semibold">Desconectado</span>
+                  </>
+                )}
+              </div>
+
+              <div className="text-xs text-neutral-600 mb-4 flex items-center gap-2">
+                <CalendarClock size={14} />
+                {mlCreds?.expires_at
+                  ? <>Expira: {new Date(mlCreds.expires_at).toLocaleString('es-CL')}</>
+                  : <>Sin expiración registrada</>}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  onClick={startMeliOAuth}
+                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-700 text-white"
+                  title="Iniciar conexión OAuth con Mercado Libre"
+                >
+                  <KeyRound size={16} />
+                  Conectar con Mercado Libre
+                </button>
+
+                <button
+                  onClick={() => setMlModalOpen(true)}
+                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border hover:bg-neutral-50"
+                  title="Editar credenciales manualmente"
+                >
+                  <KeyRound size={16} />
+                  Editar manualmente
+                </button>
+
+                <button
+                  onClick={refreshMeliToken}
+                  disabled={!mlCreds?.refresh_token}
+                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                  title="Actualizar access_token usando refresh_token"
+                >
+                  <RefreshCw size={16} />
+                  Actualizar token
+                </button>
+
+                <button
+                  onClick={disconnectMl}
+                  disabled={!mlCreds}
+                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+                  title="Eliminar credenciales guardadas"
+                >
+                  <Unplug size={16} />
+                  Desconectar
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Otras tarjetas de ejemplo */}
         <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 hover:shadow-lg transition-shadow">
           <div className="flex items-center space-x-3 mb-4">
             <div className="p-3 bg-green-100 text-green-600 rounded-lg">
@@ -609,7 +818,6 @@ export const Admin = ({ user }: AdminProps) => {
                       value={form.password || ''}
                       onChange={(e) => setForm(s => ({ ...s, password: e.target.value }))}
                     />
-                    {/* Medidor de seguridad */}
                     {(form.password ?? '').length > 0 && (() => {
                       const s = assessPassword(form.password || '')
                       return (
@@ -663,10 +871,9 @@ export const Admin = ({ user }: AdminProps) => {
                     {formError && <p className="text-sm text-red-600">{formError}</p>}
 
                     <div className="flex gap-2">
-                      {/* Botón guardar con bloqueo según seguridad */}
                       {(() => {
                         const s = assessPassword(form.password || '')
-                        const tooWeak = !editingId && s.score < 2  // Bloquea solo al CREAR
+                        const tooWeak = !editingId && s.score < 2
                         return (
                           <button
                             onClick={handleSave}
@@ -712,6 +919,69 @@ export const Admin = ({ user }: AdminProps) => {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------- MODAL ML CREDENTIALS ---------- */}
+      {mlModalOpen && (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <div className="flex items-center gap-2">
+                <KeyRound />
+                <h3 className="font-semibold">Editar credenciales Mercado Libre</h3>
+              </div>
+              <button onClick={() => setMlModalOpen(false)} className="p-1 rounded hover:bg-neutral-100">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-3">
+              <label className="block text-sm text-neutral-600">Access Token</label>
+              <input
+                className="w-full border rounded-xl p-3"
+                value={mlForm.access_token}
+                onChange={(e) => setMlForm(s => ({ ...s, access_token: e.target.value }))}
+                placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+              />
+
+              <label className="block text-sm text-neutral-600">Refresh Token</label>
+              <input
+                className="w-full border rounded-xl p-3"
+                value={mlForm.refresh_token}
+                onChange={(e) => setMlForm(s => ({ ...s, refresh_token: e.target.value }))}
+                placeholder="TG93bmdDb21wbGV4UmVmcmVzaFRva2Vu..."
+              />
+
+              <label className="block text-sm text-neutral-600">Expira en (ISO)</label>
+              <input
+                className="w-full border rounded-xl p-3"
+                value={mlForm.expires_at}
+                onChange={(e) => setMlForm(s => ({ ...s, expires_at: e.target.value }))}
+                placeholder="2025-12-31T23:59:59.000Z"
+              />
+
+              <div className="pt-2 flex items-center gap-2">
+                <button
+                  onClick={saveMlCreds}
+                  disabled={mlSaving}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-semibold disabled:opacity-50"
+                >
+                  {mlSaving ? 'Guardando…' : 'Guardar credenciales'}
+                </button>
+                <button
+                  onClick={() => setMlModalOpen(false)}
+                  className="px-4 py-2 rounded-lg border hover:bg-neutral-50"
+                >
+                  Cancelar
+                </button>
+              </div>
+
+              <p className="text-xs text-neutral-500">
+                Consejo: no pegues el access token si está a punto de expirar; usa “Actualizar token”.
+              </p>
             </div>
           </div>
         </div>
