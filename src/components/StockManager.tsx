@@ -3,7 +3,7 @@ import { Plus, Pencil, Trash2, X, ChevronsLeft, ChevronLeft, ChevronRight, Chevr
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import { emitAlert } from '../state/alertsBus';
-import { wooCreateProductLocal, wooPushStockLocal } from '../data/woo';
+import { wooCreateProductLocal, wooDeleteProductLocal, wooPushStockLocal } from '../data/woo';
 
 type Product = {
   id: number;
@@ -199,28 +199,46 @@ export const StockManager = () => {
 
   // ---------- Eliminar seleccionados ----------
   const deleteSelected = async () => {
-    if (selectedIds.length === 0) return toast.error('No hay productos seleccionados.');
-    if (!confirm(`¿Eliminar ${selectedIds.length} producto(s)?`)) return;
+  if (selectedIds.length === 0) return toast.error('No hay productos seleccionados.');
+  if (!confirm(`¿Eliminar ${selectedIds.length} producto(s) en BD y Woo?`)) return;
 
-    const selectedProducts = products.filter((p) => selectedIds.includes(p.id));
-    const { error } = await supabase.from('productos').delete().in('id', selectedIds);
-    if (error) {
-      console.error(error);
-      toastAndLog(error.message || 'Error al eliminar productos.', 'error');
-    } else {
-      selectedProducts.forEach((p) =>
-        emitAlert({ type: 'error', message: `Producto eliminado: ${p.name} (SKU ${p.sku})`, channel: 'stock' })
-      );
-      toast.success('Productos eliminados correctamente.');
+  // Productos seleccionados (para tener los SKUs)
+  const selectedProducts = products.filter(p => selectedIds.includes(p.id));
+  const skus = selectedProducts.map(p => String(p.sku));
 
-      const remaining = totalRows - selectedIds.length;
-      const lastPage = Math.max(1, Math.ceil(remaining / pageSize));
-      if (page > lastPage) setPage(lastPage);
-      else fetchProducts({ silent: true });
+  // 1) Borrado en Woo (best-effort, en paralelo)
+  const results = await Promise.allSettled(
+    skus.map(sku => wooDeleteProductLocal(sku))
+  );
 
-      setSelectedIds([]);
-    }
-  };
+  const okWoo = results.filter(r => r.status === 'fulfilled').length;
+  const failWoo = results.length - okWoo;
+
+  if (failWoo > 0) {
+    console.warn('Woo delete falló en', failWoo, 'elementos', results);
+  }
+
+  // 2) Borrado en Supabase
+  const { error } = await supabase.from('productos').delete().in('id', selectedIds);
+  if (error) {
+    console.error(error);
+    toastAndLog(error.message || 'Error al eliminar productos en BD.', 'error');
+    return;
+  }
+
+  // Alertas + toasts
+  selectedProducts.forEach(p =>
+    emitAlert({ type: 'error', message: `Producto eliminado: ${p.name} (SKU ${p.sku})`, channel: 'stock' })
+  );
+  toast.success(`Eliminados ${selectedIds.length} en BD. Woo: ${okWoo} ok / ${failWoo} fallo(s).`);
+
+  // 3) Ajuste de paginación y refresco
+  const remaining = totalRows - selectedIds.length;
+  const lastPage = Math.max(1, Math.ceil(remaining / pageSize));
+  setSelectedIds([]);
+  if (page > lastPage) setPage(lastPage);
+  else fetchProducts({ silent: true });
+};
 
   // ---------- Buscar SKU al salir del input ----------
   const handleSKUBlur = async () => {
