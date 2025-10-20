@@ -1,6 +1,16 @@
 // src/components/Web.tsx
 import { useEffect, useState } from "react";
-import { wooPullProducts, wooSyncDown, type WooItem } from "../data/woo";
+import { wooPullProducts, wooSyncDown } from "../data/woo";
+
+// Define el tipo localmente (el helper no lo exporta)
+type WooItem = {
+  id: number;
+  name: string;
+  sku: string;
+  type?: string;
+  manage_stock?: boolean;
+  stock_quantity?: number | null;
+};
 
 export default function Web() {
   const [rows, setRows] = useState<WooItem[]>([]);
@@ -27,6 +37,7 @@ export default function Web() {
 
   const syncAll = async () => {
     setSyncing(true);
+    setError(null);
     try {
       await wooSyncDown(); // Woo → actualiza productos.stockweb en Supabase
       await load();        // refresca tabla Web
@@ -39,7 +50,7 @@ export default function Web() {
 
   return (
     <div className="p-4">
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold">WordPress</h1>
         <div className="flex gap-2">
           <button
@@ -62,19 +73,19 @@ export default function Web() {
       </div>
 
       {error && (
-        <div className="mb-3 text-red-700 bg-red-50 border border-red-200 rounded p-2">
+        <div className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-red-700">
           {error}
         </div>
       )}
 
-      <div className="rounded border overflow-hidden">
+      <div className="overflow-hidden rounded border">
         <table className="w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="text-left p-2">Producto</th>
-              <th className="text-left p-2">SKU</th>
-              <th className="text-left p-2">Manage</th>
-              <th className="text-right p-2">Stock</th>
+              <th className="p-2 text-left">Producto</th>
+              <th className="p-2 text-left">SKU</th>
+              <th className="p-2 text-left">Manage</th>
+              <th className="p-2 text-right">Stock</th>
             </tr>
           </thead>
           <tbody>
