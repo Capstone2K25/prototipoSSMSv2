@@ -235,22 +235,17 @@ export const Admin = ({ user }: AdminProps) => {
   };
 
   const startMeliOAuth = async () => {
-    // Edge function debe devolver { auth_url: string }
-    try {
-      const { data, error } = await supabase.functions.invoke('meli-oauth-start', {
-        body: {
-          // El callback debería vivir en tu app (p. ej. /oauth/meli/callback)
-          redirect_to: window.location.origin + '/oauth/meli/callback'
-        }
-      });
-      if (error) throw new Error(error.message || 'No se pudo iniciar OAuth');
-      const authUrl = (data as any)?.auth_url;
-      if (!authUrl) throw new Error('auth_url no recibido');
-      window.location.href = authUrl;
-    } catch (e: any) {
-      emitAlert({ type: 'error', message: `Error iniciando OAuth: ${e.message || e}`, channel: 'ml' });
-    }
-  };
+  try {
+    const { data, error } = await supabase.functions.invoke('meli-oauth-start');
+    if (error) throw new Error(error.message || 'No se pudo iniciar OAuth');
+    const authUrl = (data as any)?.auth_url;
+    if (!authUrl) throw new Error('auth_url no recibido');
+    window.location.href = authUrl;
+  } catch (e: any) {
+    emitAlert({ type: 'error', message: `Error iniciando OAuth: ${e.message || e}`, channel: 'ml' });
+  }
+};
+
 
   const refreshMeliToken = async () => {
     // Edge function que usa refresh_token y devuelve { access_token, refresh_token?, expires_in }
