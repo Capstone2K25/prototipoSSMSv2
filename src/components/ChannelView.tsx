@@ -98,27 +98,31 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   };
 
   const fetchProducts = async () => {
-    const { data, error } = await supabase
-      .from('productos')
-      .select('id, name, sku, categoria, price, stockb2b, stockweb, stockml')
-      .order('id', { ascending: true });
-    if (error) {
-      console.error('Error al cargar productos:', error);
-      setProducts([]);
-      return;
-    }
-    const rows = (data as any[]).map((p) => ({
-      id: Number(p.id),
-      name: p.name,
-      sku: p.sku,
-      categoria: p.categoria ?? '',
-      price: Number(p.price) || 0,
-      stockb2b: Number(p.stockb2b) || 0,
-      stockweb: Number(p.stockweb) || 0,
-      stockml: Number(p.stockml) || 0,
-    })) as Product[];
-    setProducts(rows);
-  };
+  const { data, error } = await supabase
+    .from('productos')
+    .select('id, name, sku, categoria, price, stockb2b, stockweb, stockml')
+    .gt('stockml', 0)               // ⬅️ solo > 0
+    .order('id', { ascending: true });
+
+  if (error) {
+    console.error('Error al cargar productos:', error);
+    setProducts([]);
+    return;
+  }
+
+  const rows = (data as any[]).map((p) => ({
+    id: Number(p.id),
+    name: p.name,
+    sku: p.sku,
+    categoria: p.categoria ?? '',
+    price: Number(p.price) || 0,
+    stockb2b: Number(p.stockb2b) || 0,
+    stockweb: Number(p.stockweb) || 0,
+    stockml: Number(p.stockml) || 0,
+  }));
+  setProducts(rows);
+};
+
 
   const fetchMlLinks = async () => {
     const { data, error } = await supabase
