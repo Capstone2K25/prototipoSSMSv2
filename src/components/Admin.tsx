@@ -28,8 +28,15 @@ const HIDDEN_USERNAMES = ['root'];
 type Role = 'admin' | 'manager' | 'viewer'
 
 interface AdminProps {
-  user: { id: string; username: string; role?: string | null } | null
+  user: {
+    id: string;
+    username: string;
+    role?: string | null;
+    full_name?: string | null;   // <-- NUEVO
+    email?: string | null;       // <-- NUEVO
+  } | null
 }
+
 
 type Usuario = {
   id: string
@@ -463,6 +470,50 @@ export const Admin = ({ user }: AdminProps) => {
       </div>
     )
   }
+{/* Header + cuenta del usuario activo */}
+<div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6">
+  <div className="flex items-center justify-between">
+    <div>
+      <h2 className="text-xl font-bold text-neutral-900">Administración</h2>
+      <p className="text-sm text-neutral-600">
+        Bienvenido, {user?.full_name || user?.username}
+      </p>
+    </div>
+
+    {/* Badge simple con iniciales */}
+    <div className="flex items-center gap-3">
+      <div className="w-10 h-10 rounded-full grid place-items-center border">
+        <span className="text-sm font-semibold">
+          {(user?.full_name || user?.username || '?')
+            .split(' ')
+            .map(p => p[0]?.toUpperCase())
+            .slice(0,2)
+            .join('') || '?'}
+        </span>
+      </div>
+      <div className="leading-tight">
+        <div className="font-semibold">{user?.full_name || user?.username}</div>
+        <div className="text-xs opacity-70">Rol: {(user?.role || '—').toString().toLowerCase()}</div>
+      </div>
+    </div>
+  </div>
+
+  {/* Ficha rápida */}
+  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 text-sm">
+    <div className="p-3 rounded-xl border">
+      <div className="opacity-60">Usuario</div>
+      <div className="font-medium">{user?.username}</div>
+    </div>
+    <div className="p-3 rounded-xl border">
+      <div className="opacity-60">Email</div>
+      <div className="font-medium">{user?.email || '—'}</div>
+    </div>
+    <div className="p-3 rounded-xl border">
+      <div className="opacity-60">Rol</div>
+      <div className="font-medium">{(user?.role || '—')?.toString().toLowerCase()}</div>
+    </div>
+  </div>
+</div>
 
   return (
     <div className="space-y-6">
