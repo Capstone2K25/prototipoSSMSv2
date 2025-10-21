@@ -80,10 +80,29 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     });
 
   const isMeliConnected = useMemo(() => {
-    if (!mlCreds) return false;
-    const exp = new Date(mlCreds.expires_at).getTime();
-    return Date.now() < exp - 2 * 60 * 1000; // válido con margen de 2 minutos
-  }, [mlCreds]);
+  if (!mlCreds) return false;
+
+  const raw = (mlCreds as any).expires_at; // puede ser string o number
+
+  // Normaliza a milisegundos
+  let expMs: number | null = null;
+
+  if (typeof raw === 'number') {
+    expMs = raw > 1e12 ? raw : raw * 1000;          // ms o s
+  } else if (typeof raw === 'string') {
+    const num = Number(raw);
+    if (!Number.isNaN(num)) {
+      expMs = num > 1e12 ? num : num * 1000;        // "1730…" en s/ms
+    } else {
+      const parsed = Date.parse(raw);               // ISO
+      expMs = Number.isFinite(parsed) ? parsed : null;
+    }
+  }
+
+  if (!expMs) return !!(mlCreds as any).access_token; // fallback: si hay token, lo damos por válido
+  return Date.now() < expMs - 2 * 60 * 1000;
+}, [mlCreds]);
+
 
   // ===== Fetch datos =====
   const fetchProducts = async () => {
