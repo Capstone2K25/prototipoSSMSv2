@@ -79,30 +79,23 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
       minute: '2-digit',
     });
 
-  const isMeliConnected = useMemo(() => {
-  if (!mlCreds) return false;
+  const connected = !!health?.connected;
+  const expiresInMin = useMemo(() => {
+    if (!health?.expires_at_ms || !health.now_ms) return null;
+    return Math.floor((health.expires_at_ms - health.now_ms) / 60000);
+  }, [health]);
 
-  const raw = (mlCreds as any).expires_at; // puede ser string o number
-
-  // Normaliza a milisegundos
-  let expMs: number | null = null;
-
-  if (typeof raw === 'number') {
-    expMs = raw > 1e12 ? raw : raw * 1000;          // ms o s
-  } else if (typeof raw === 'string') {
-    const num = Number(raw);
-    if (!Number.isNaN(num)) {
-      expMs = num > 1e12 ? num : num * 1000;        // "1730…" en s/ms
-    } else {
-      const parsed = Date.parse(raw);               // ISO
-      expMs = Number.isFinite(parsed) ? parsed : null;
+  // ===== Fetchers =====
+  const fetchHealth = async () => {
+    try {
+      const url = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL + '/meli-health';
+      const r = await fetch(url, { method: 'GET' });
+      const j = (await r.json()) as Health;
+      setHealth(j);
+    } catch {
+      setHealth({ connected: false });
     }
-  }
-
-  if (!expMs) return !!(mlCreds as any).access_token; // fallback: si hay token, lo damos por válido
-  return Date.now() < expMs - 2 * 60 * 1000;
-}, [mlCreds]);
-
+  };
 
   const fetchProducts = async () => {
     const { data, error } = await supabase
