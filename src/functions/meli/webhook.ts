@@ -1,19 +1,27 @@
-// /functions/meli/webhook.ts
 /// <reference types="@cloudflare/workers-types" />
 
-export const onRequest: PagesFunction = async (ctx) => {
-  const { request } = ctx;
-
+export const onRequest: PagesFunction = async ({ request, env }) => {
+  // ML hace un GET para validar → responde 200 OK
   if (request.method === "GET") {
     return new Response("OK", { status: 200 });
   }
 
-  const res = await fetch("https://vloofwzvvoyvrvaqbitm.supabase.co/functions/v1/meli-webhook", {
-    method: request.method,
-    headers: request.headers,
-    body: request.method === "POST" ? await request.text() : undefined,
+  // Tu función real en Supabase
+  const target = "https://vloofwzvvoyvrvaqbitm.supabase.co/functions/v1/meli-webhook";
+
+  // Copia headers y agrega Authorization/apikey
+  const headers = new Headers(request.headers);
+  headers.set("Authorization", `Bearer ${env.SUPABASE_ANON_KEY}`);
+  headers.set("apikey", env.SUPABASE_ANON_KEY);
+
+  const res = await fetch(target, {
+    method: "POST",
+    headers,
+    body: await request.text(),
   });
 
-  return new Response(await res.text(), { status: res.status, headers: res.headers });
+  return new Response(await res.text(), {
+    status: res.status,
+    headers: res.headers,
+  });
 };
-
