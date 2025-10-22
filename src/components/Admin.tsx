@@ -1,3 +1,4 @@
+// src/components/Admin.tsx
 import { useEffect, useMemo, useState } from 'react'
 import {
   Settings,
@@ -50,7 +51,7 @@ type MLCreds = {
   id?: string
   access_token: string
   refresh_token: string
-  expires_at: string // ISO o Unix (string/number). Lo normalizamos al guardar.
+  expires_at: string // ISO o número como string
   updated_at?: string
 }
 
@@ -59,6 +60,7 @@ type Health = {
   nickname?: string
   expires_at_ms?: number
   now_ms?: number
+  reason?: string
 }
 
 const USERNAME_RX = /^[a-zA-Z0-9._-]{3,32}$/
@@ -162,15 +164,22 @@ export const Admin = ({ user }: AdminProps) => {
     emitAlert({ type, message: msg, channel: 'usuarios' });
   };
 
-  // ======= MERCADO LIBRE: estado (health) + credenciales =======
+  // ======= MERCADO LIBRE =======
+  // Credenciales (para edición manual)
   const [mlLoading, setMlLoading] = useState(false);
-  const [mlCreds, setMlCreds] = useState<MLCreds | null>(null); // solo para edición manual
+  const [mlCreds, setMlCreds] = useState<MLCreds | null>(null);
   const [mlModalOpen, setMlModalOpen] = useState(false);
   const [mlSaving, setMlSaving] = useState(false);
-  const [mlForm, setMlForm] = useState<MLCreds>({ access_token: '', refresh_token: '', expires_at: '' });
+  const [mlForm, setMlForm] = useState<MLCreds>({
+    access_token: '',
+    refresh_token: '',
+    expires_at: ''
+  });
 
+  // Health real (evita falsos "desconectado")
   const [health, setHealth] = useState<Health | null>(null);
   const connected = !!health?.connected;
+
   const expiresInMin = useMemo(() => {
     if (!health?.expires_at_ms || !health.now_ms) return null;
     return Math.floor((health.expires_at_ms - health.now_ms) / 60000);
@@ -178,12 +187,12 @@ export const Admin = ({ user }: AdminProps) => {
 
   const fetchHealth = async () => {
     try {
-      const url = (import.meta as any).env.VITE_SUPABASE_FUNCTIONS_URL + '/meli-health';
+      const url = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL + '/meli-health';
       const r = await fetch(url);
-      const j = await r.json();
+      const j = (await r.json()) as Health;
       setHealth(j);
     } catch {
-      setHealth({ connected: false });
+      setHealth({ connected: false, reason: 'fetch_error' });
     }
   };
 
@@ -202,7 +211,7 @@ export const Admin = ({ user }: AdminProps) => {
         setMlForm({
           access_token: (data as any).access_token || '',
           refresh_token: (data as any).refresh_token || '',
-          expires_at: String((data as any).expires_at || ''),
+          expires_at: (data as any).expires_at || ''
         });
       } else {
         setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
@@ -215,19 +224,6 @@ export const Admin = ({ user }: AdminProps) => {
     }
   };
 
-  const normalizeToISO = (input: string): string => {
-    // acepta ISO, segundos o milisegundos y devuelve ISO
-    const n = Number(input);
-    if (!Number.isNaN(n)) {
-      const ms = n > 1e12 ? n : n * 1000;
-      return new Date(ms).toISOString();
-    }
-    const t = Date.parse(input);
-    if (Number.isFinite(t)) return new Date(t).toISOString();
-    // si no podemos parsear, guardamos tal cual (pero health-check manda)
-    return input;
-  };
-
   const saveMlCreds = async () => {
     if (!mlForm.access_token || !mlForm.refresh_token || !mlForm.expires_at) {
       toast('Completa access_token, refresh_token y expires_at');
@@ -235,10 +231,20 @@ export const Admin = ({ user }: AdminProps) => {
     }
     setMlSaving(true);
     try {
+      // Normaliza expires_at a ISO si es numérico (segundos/ms)
+      let exp = mlForm.expires_at;
+      const n = Number(exp);
+      if (!Number.isNaN(n)) {
+        exp = (n > 1e12 ? new Date(n) : new Date(n * 1000)).toISOString();
+      } else {
+        const parsed = Date.parse(exp);
+        exp = Number.isFinite(parsed) ? new Date(parsed).toISOString() : exp;
+      }
+
       const payload = {
         access_token: mlForm.access_token,
         refresh_token: mlForm.refresh_token,
-        expires_at: normalizeToISO(mlForm.expires_at),
+        expires_at: exp,
         updated_at: new Date().toISOString()
       };
       const { error } = await supabase.from('ml_credentials').upsert(payload, { onConflict: 'id' });
@@ -261,8 +267,8 @@ export const Admin = ({ user }: AdminProps) => {
       if (error) throw error;
       setMlCreds(null);
       setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
-      setHealth({ connected: false });
       emitAlert({ type: 'error', message: 'Mercado Libre desconectado', channel: 'ml' });
+      await fetchHealth();
     } catch (e: any) {
       emitAlert({ type: 'error', message: `No se pudo desconectar: ${e.message || e}`, channel: 'ml' });
     }
@@ -277,6 +283,30 @@ export const Admin = ({ user }: AdminProps) => {
       window.location.href = authUrl;
     } catch (e: any) {
       emitAlert({ type: 'error', message: `Error iniciando OAuth: ${e.message || e}`, channel: 'ml' });
+    }
+  };
+
+  const refreshMeliToken = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('meli-refresh-token', {});
+      if (error) throw new Error(error.message || 'No se pudo refrescar token');
+
+      const { access_token, refresh_token, expires_in } = data as any;
+      const expires_at = new Date(Date.now() + Number(expires_in) * 1000).toISOString();
+
+      const up = {
+        access_token,
+        refresh_token: refresh_token || mlCreds?.refresh_token || '',
+        expires_at,
+        updated_at: new Date().toISOString()
+      };
+      const { error: upErr } = await supabase.from('ml_credentials').upsert(up, { onConflict: 'id' });
+      if (upErr) throw upErr;
+
+      emitAlert({ type: 'sync', message: 'Token ML actualizado', channel: 'ml' });
+      await Promise.all([loadMlCreds(), fetchHealth()]);
+    } catch (e: any) {
+      emitAlert({ type: 'error', message: `No se pudo actualizar el token: ${e.message || e}`, channel: 'ml' });
     }
   };
 
@@ -330,8 +360,8 @@ export const Admin = ({ user }: AdminProps) => {
   }
 
   useEffect(() => {
-    // al montar: cargar health + credenciales (solo para edición manual)
-    Promise.all([fetchHealth(), loadMlCreds()]).catch(() => {});
+    // Cargar credenciales (para modal) y estado real (health)
+    Promise.all([loadMlCreds(), fetchHealth()]).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -521,75 +551,84 @@ export const Admin = ({ user }: AdminProps) => {
             <h3 className="text-lg font-bold text-neutral-900">Credenciales Mercado Libre</h3>
           </div>
 
-          {/* Estado real via health-check */}
-          <div className="flex items-center gap-2 mb-2">
-            {connected ? (
-              <>
-                <CheckCircle className="text-green-600" size={18} />
-                <span className="text-green-700 font-semibold">Conectado</span>
-              </>
-            ) : (
-              <>
-                <AlertCircle className="text-red-600" size={18} />
-                <span className="text-red-700 font-semibold">Desconectado</span>
-              </>
-            )}
-          </div>
+          {mlLoading ? (
+            <p className="text-neutral-500">Cargando estado…</p>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 mb-2">
+                {connected ? (
+                  <>
+                    <CheckCircle className="text-green-600" size={18} />
+                    <span className="text-green-700 font-semibold">Conectado</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="text-red-600" size={18} />
+                    <span className="text-red-700 font-semibold">Desconectado</span>
+                  </>
+                )}
+              </div>
 
-          <div className="text-xs text-neutral-600 mb-4 flex items-center gap-2">
-            <CalendarClock size={14} />
-            {connected ? (
-              <>{typeof expiresInMin === 'number' ? `Expira en ~${expiresInMin} min` : 'Expiración no disponible'}</>
-            ) : (
-              <>Conecta tu cuenta para empezar</>
-            )}
-          </div>
+              <div className="text-xs text-neutral-600 mb-4 flex items-center gap-2">
+                <CalendarClock size={14} />
+                {connected && typeof expiresInMin === 'number'
+                  ? <>Expira en ~{expiresInMin} min</>
+                  : mlCreds?.expires_at
+                    ? <>Expira: {new Date(mlCreds.expires_at).toLocaleString('es-CL')}</>
+                    : <>Sin expiración registrada</>}
+              </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <button
-              onClick={startMeliOAuth}
-              className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-700 text-white"
-              title="Iniciar conexión OAuth con Mercado Libre"
-            >
-              <KeyRound size={16} />
-              Conectar con Mercado Libre
-            </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  onClick={startMeliOAuth}
+                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-700 text-white"
+                  title="Iniciar conexión OAuth con Mercado Libre"
+                >
+                  <KeyRound size={16} />
+                  Conectar con Mercado Libre
+                </button>
 
-            <button
-              onClick={() => setMlModalOpen(true)}
-              className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border hover:bg-neutral-50"
-              title="Editar credenciales manualmente"
-            >
-              <KeyRound size={16} />
-              Editar manualmente
-            </button>
+                <button
+                  onClick={() => setMlModalOpen(true)}
+                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border hover:bg-neutral-50"
+                  title="Editar credenciales manualmente"
+                >
+                  <KeyRound size={16} />
+                  Editar manualmente
+                </button>
 
-            <button
-              onClick={fetchHealth}
-              className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
-              title="Actualizar estado"
-            >
-              <RefreshCw size={16} />
-              Actualizar estado
-            </button>
+                <button
+                  onClick={refreshMeliToken}
+                  disabled={!mlCreds?.refresh_token}
+                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                  title="Actualizar access_token usando refresh_token"
+                >
+                  <RefreshCw size={16} />
+                  Actualizar token
+                </button>
 
-            <button
-              onClick={disconnectMl}
-              className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white"
-              title="Eliminar credenciales guardadas"
-            >
-              <Unplug size={16} />
-              Desconectar
-            </button>
-          </div>
+                <button
+                  onClick={disconnectMl}
+                  disabled={!mlCreds}
+                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+                  title="Eliminar credenciales guardadas"
+                >
+                  <Unplug size={16} />
+                  Desconectar
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Otras tarjetas */}
         <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 hover:shadow-lg transition-shadow">
-          <div className="p-3 bg-green-100 text-green-600 rounded-lg">
-            <Upload size={24} />
+          <div className="flex items-center space-x-3 mb-4">
+            <div className="p-3 bg-green-100 text-green-600 rounded-lg">
+              <Upload size={24} />
+            </div>
+            <h3 className="text-lg font-bold text-neutral-900">Carga Masiva</h3>
           </div>
-          <h3 className="text-lg font-bold text-neutral-900 mt-3 mb-2">Carga Masiva</h3>
           <p className="text-neutral-600 mb-6">Importar productos desde archivos Excel o CSV…</p>
           <button className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition-colors">
             Cargar Archivo Excel
@@ -597,10 +636,10 @@ export const Admin = ({ user }: AdminProps) => {
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 hover:shadow-lg transition-shadow">
-          <div className="p-3 bg-purple-100 text-purple-600 rounded-lg">
+          <div className="p-3 bg-purple-100 text-purple-600 rounded-lg mb-4 inline-block">
             <Download size={24} />
           </div>
-          <h3 className="text-lg font-bold text-neutral-900 mt-3 mb-2">Exportar Reportes</h3>
+          <h3 className="text-lg font-bold text-neutral-900 mb-2">Exportar Reportes</h3>
           <p className="text-neutral-600 mb-6">Descargar reportes en formato CSV…</p>
           <button className="w-full bg-purple-600 text-white py-3 rounded-lg font-semibold hover:bg-purple-700 transition-colors">
             Exportar Reporte CSV
@@ -608,10 +647,10 @@ export const Admin = ({ user }: AdminProps) => {
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 hover:shadow-lg transition-shadow">
-          <div className="p-3 bg-orange-100 text-orange-600 rounded-lg">
+          <div className="p-3 bg-orange-100 text-orange-600 rounded-lg mb-4 inline-block">
             <Database size={24} />
           </div>
-          <h3 className="text-lg font-bold text-neutral-900 mt-3 mb-2">Backup de Datos</h3>
+          <h3 className="text-lg font-bold text-neutral-900 mb-2">Backup de Datos</h3>
           <p className="text-neutral-600 mb-6">Respaldo de base de datos…</p>
           <button className="w-full bg-orange-600 text-white py-3 rounded-lg font-semibold hover:bg-orange-700 transition-colors">
             Crear Backup
@@ -941,7 +980,7 @@ export const Admin = ({ user }: AdminProps) => {
                 className="w-full border rounded-xl p-3"
                 value={mlForm.access_token}
                 onChange={(e) => setMlForm(s => ({ ...s, access_token: e.target.value }))}
-                placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                placeholder="APP_USR-..."
               />
 
               <label className="block text-sm text-neutral-600">Refresh Token</label>
@@ -949,15 +988,15 @@ export const Admin = ({ user }: AdminProps) => {
                 className="w-full border rounded-xl p-3"
                 value={mlForm.refresh_token}
                 onChange={(e) => setMlForm(s => ({ ...s, refresh_token: e.target.value }))}
-                placeholder="TG93bmdDb21wbGV4UmVmcmVzaFRva2Vu..."
+                placeholder="TG-..."
               />
 
-              <label className="block text-sm text-neutral-600">Expira en (ISO / Unix)</label>
+              <label className="block text-sm text-neutral-600">Expira en (ISO o epoch)</label>
               <input
                 className="w-full border rounded-xl p-3"
                 value={mlForm.expires_at}
                 onChange={(e) => setMlForm(s => ({ ...s, expires_at: e.target.value }))}
-                placeholder="2025-12-31T23:59:59.000Z o 1767135599"
+                placeholder="2025-12-31T23:59:59.000Z o 1735603199"
               />
 
               <div className="pt-2 flex items-center gap-2">
@@ -977,7 +1016,7 @@ export const Admin = ({ user }: AdminProps) => {
               </div>
 
               <p className="text-xs text-neutral-500">
-                Consejo: si pegas un Unix time (segundos o milisegundos) lo convertimos a ISO automáticamente.
+                Consejo: si pegas un epoch (segundos/milisegundos) lo convierto automáticamente a ISO.
               </p>
             </div>
           </div>
