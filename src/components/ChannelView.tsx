@@ -40,7 +40,7 @@ type Health = {
   now_ms?: number;
 };
 
-export default function ChannelView({ channel }: ChannelViewProps) {
+export const ChannelView = ({ channel }: ChannelViewProps) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [mlLinks, setMlLinks] = useState<Record<string, MLLink>>({});
   const [health, setHealth] = useState<Health | null>(null);
@@ -86,13 +86,9 @@ export default function ChannelView({ channel }: ChannelViewProps) {
 
   // ============ LOADERS ============
   const fetchHealth = async () => {
-    // Invoca Supabase Function (POST por defecto)
     const { data, error } = await supabase.functions.invoke('meli-health');
-    if (error) {
-      setHealth({ connected: false });
-    } else {
-      setHealth(data as Health);
-    }
+    if (error) setHealth({ connected: false });
+    else setHealth(data as Health);
   };
 
   const fetchProducts = async () => {
@@ -145,11 +141,7 @@ export default function ChannelView({ channel }: ChannelViewProps) {
   const handleSyncAll = async () => {
     try {
       setSyncing(true);
-      // POST /meli-pull (SDK)
-      const { error } = await supabase.functions.invoke('meli-pull', {
-        body: { reason: 'manual' },
-      });
-      if (error) console.error(error);
+      await supabase.functions.invoke('meli-pull', { body: { reason: 'manual' } });
       await Promise.all([fetchProducts(), fetchMlLinks(), fetchHealth()]);
       setLastSync(new Date());
     } finally {
@@ -163,9 +155,7 @@ export default function ChannelView({ channel }: ChannelViewProps) {
       await Promise.all([fetchProducts(), fetchMlLinks(), fetchHealth()]);
       setLoading(false);
     })();
-    const interval = setInterval(() => {
-      fetchHealth();
-    }, 1000 * 60 * 3);
+    const interval = setInterval(() => void fetchHealth(), 1000 * 60 * 3);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -207,12 +197,9 @@ export default function ChannelView({ channel }: ChannelViewProps) {
     });
 
     if (error || !(data as any)?.ok) {
-      const msg =
-        error?.message ||
-        `Fallo al publicar: ${JSON.stringify((data as any)?.error ?? data)}`;
+      const msg = error?.message || `Fallo al publicar: ${JSON.stringify((data as any)?.error ?? data)}`;
       throw new Error(msg);
     }
-    // Refrescar links; si stockml subió desde la función, también aparecerá aquí.
     await fetchMlLinks();
   }
 
@@ -222,7 +209,7 @@ export default function ChannelView({ channel }: ChannelViewProps) {
       if (!connected) throw new Error('Mercado Libre desconectado. Conecta antes de continuar.');
       const link = mlLinks[p.sku];
       if (link?.meli_item_id) {
-        await handleSyncAll(); // refresca estado desde ML
+        await handleSyncAll(); // refrescar estado
         alert(`Estado sincronizado para SKU ${p.sku}.`);
       } else {
         await publicarEnML(p);
@@ -274,11 +261,7 @@ export default function ChannelView({ channel }: ChannelViewProps) {
         <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">Estado</h3>
-            {connected ? (
-              <CheckCircle className="text-green-600" size={20} />
-            ) : (
-              <AlertCircle className="text-red-600" size={20} />
-            )}
+            {connected ? <CheckCircle className="text-green-600" size={20} /> : <AlertCircle className="text-red-600" size={20} />}
           </div>
           {connected ? (
             <>
@@ -291,9 +274,7 @@ export default function ChannelView({ channel }: ChannelViewProps) {
           ) : (
             <>
               <p className="text-2xl font-bold text-red-600">Desconectado</p>
-              <p className="text-xs text-neutral-500 mt-1">
-                Ve a credenciales y conecta tu cuenta de Mercado Libre.
-              </p>
+              <p className="text-xs text-neutral-500 mt-1">Ve a credenciales y conecta tu cuenta de Mercado Libre.</p>
             </>
           )}
         </div>
@@ -432,4 +413,7 @@ export default function ChannelView({ channel }: ChannelViewProps) {
       </div>
     </div>
   );
-}
+};
+
+// también lo exporto por defecto, por si en algún archivo lo importas así:
+export default ChannelView;
