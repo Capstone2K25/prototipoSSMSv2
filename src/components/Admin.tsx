@@ -1,5 +1,5 @@
 // src/components/Admin.tsx
-const CREDS_ID = '00000000-0000-0000-0000-000000000001'; // UUID fijo para fila única
+const CREDS_ID = '00000000-0000-0000-0000-000000000001'; // Fila única para credenciales ML
 
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -53,7 +53,7 @@ type MLCreds = {
   id?: string
   access_token: string
   refresh_token: string
-  expires_at: string // ISO o número como string
+  expires_at: string
   updated_at?: string
 }
 
@@ -167,7 +167,6 @@ export const Admin = ({ user }: AdminProps) => {
   };
 
   // ======= MERCADO LIBRE =======
-  // Credenciales (para edición manual)
   const [mlLoading, setMlLoading] = useState(false);
   const [mlCreds, setMlCreds] = useState<MLCreds | null>(null);
   const [mlModalOpen, setMlModalOpen] = useState(false);
@@ -178,7 +177,7 @@ export const Admin = ({ user }: AdminProps) => {
     expires_at: ''
   });
 
-  // Health real (evita falsos "desconectado")
+  // Health (estado real)
   const [health, setHealth] = useState<Health | null>(null);
   const connected = !!health?.connected;
 
@@ -187,45 +186,44 @@ export const Admin = ({ user }: AdminProps) => {
     return Math.floor((health.expires_at_ms - health.now_ms) / 60000);
   }, [health]);
 
+  // ---- helpers ML
   const fetchHealth = async () => {
-  try {
-    const { data, error } = await supabase.functions.invoke('meli-health', { body: {} });
-    if (error) throw error;
-    setHealth(data as Health);
-  } catch (e) {
-    console.error('meli-health error:', e);
-    setHealth({ connected: false, reason: 'fetch_error' });
-  }
-};
-
+    try {
+      const { data, error } = await supabase.functions.invoke('meli-health', { body: {} });
+      if (error) throw error;
+      setHealth(data as Health);
+    } catch (e) {
+      console.error('meli-health error:', e);
+      setHealth({ connected: false, reason: 'fetch_error' });
+    }
+  };
 
   const loadMlCreds = async () => {
-  setMlLoading(true);
-  try {
-    const { data, error } = await supabase
-      .from('ml_credentials')
-      .select('*')
-      .eq('id', CREDS_ID)
-      .maybeSingle();
-    if (error) throw error;
-    setMlCreds(data as any);
-    if (data) {
-      setMlForm({
-        access_token: (data as any).access_token || '',
-        refresh_token: (data as any).refresh_token || '',
-        expires_at: (data as any).expires_at || ''
-      });
-    } else {
-      setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
+    setMlLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('ml_credentials')
+        .select('*')
+        .eq('id', CREDS_ID)
+        .maybeSingle();
+      if (error) throw error;
+      setMlCreds(data as any);
+      if (data) {
+        setMlForm({
+          access_token: (data as any).access_token || '',
+          refresh_token: (data as any).refresh_token || '',
+          expires_at: (data as any).expires_at || ''
+        });
+      } else {
+        setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
+      }
+    } catch (e: any) {
+      console.error('Error cargando ml_credentials:', e);
+      setMlCreds(null);
+    } finally {
+      setMlLoading(false);
     }
-  } catch (e: any) {
-    console.error('Error cargando ml_credentials:', e);
-    setMlCreds(null);
-  } finally {
-    setMlLoading(false);
-  }
-};
-
+  };
 
   const saveMlCreds = async () => {
     if (!mlForm.access_token || !mlForm.refresh_token || !mlForm.expires_at) {
@@ -234,7 +232,7 @@ export const Admin = ({ user }: AdminProps) => {
     }
     setMlSaving(true);
     try {
-      // Normaliza expires_at a ISO si es numérico (segundos/ms)
+      // Normaliza expires_at a ISO
       let exp = mlForm.expires_at;
       const n = Number(exp);
       if (!Number.isNaN(n)) {
@@ -245,15 +243,15 @@ export const Admin = ({ user }: AdminProps) => {
       }
 
       const payload = {
-  id: CREDS_ID,
-  access_token: mlForm.access_token,
-  refresh_token: mlForm.refresh_token,
-  expires_at: exp,
-  updated_at: new Date().toISOString()
-    };
-    const { error } = await supabase.from('ml_credentials').upsert(payload, { onConflict: 'id' });
-
+        id: CREDS_ID,
+        access_token: mlForm.access_token,
+        refresh_token: mlForm.refresh_token,
+        expires_at: exp,
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await supabase.from('ml_credentials').upsert(payload, { onConflict: 'id' });
       if (error) throw error;
+
       emitAlert({ type: 'sync', message: 'Credenciales ML guardadas', channel: 'ml' });
       await Promise.all([loadMlCreds(), fetchHealth()]);
       setMlModalOpen(false);
@@ -266,19 +264,19 @@ export const Admin = ({ user }: AdminProps) => {
   };
 
   const disconnectMl = async () => {
-  if (!confirm('¿Desconectar Mercado Libre? Se eliminarán las credenciales guardadas.')) return;
-  try {
-    const { error } = await supabase.from('ml_credentials').delete().eq('id', CREDS_ID);
-    if (error) throw error;
-    setMlCreds(null);
-    setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
-    emitAlert({ type: 'error', message: 'Mercado Libre desconectado', channel: 'ml' });
-    await fetchHealth(); // ← fuerza a leer el estado real de la función
-  } catch (e: any) {
-    emitAlert({ type: 'error', message: `No se pudo desconectar: ${e.message || e}`, channel: 'ml' });
-  }
-};
-
+    if (!confirm('¿Desconectar Mercado Libre? Se eliminarán las credenciales guardadas.')) return;
+    try {
+      await supabase.from('ml_credentials').delete().eq('id', CREDS_ID);
+      setMlCreds(null);
+      setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
+      emitAlert({ type: 'error', message: 'Mercado Libre desconectado', channel: 'ml' });
+    } catch (e: any) {
+      emitAlert({ type: 'error', message: `No se pudo desconectar: ${e.message || e}`, channel: 'ml' });
+    } finally {
+      await fetchHealth();  // fuerza estado real
+      await loadMlCreds();
+    }
+  };
 
   const startMeliOAuth = async () => {
     try {
@@ -301,14 +299,13 @@ export const Admin = ({ user }: AdminProps) => {
       const expires_at = new Date(Date.now() + Number(expires_in) * 1000).toISOString();
 
       const up = {
-  id: CREDS_ID,
-  access_token,
-  refresh_token: refresh_token || mlCreds?.refresh_token || '',
-  expires_at,
-  updated_at: new Date().toISOString()
-};
-const { error: upErr } = await supabase.from('ml_credentials').upsert(up, { onConflict: 'id' });
-
+        id: CREDS_ID,
+        access_token,
+        refresh_token: refresh_token || mlCreds?.refresh_token || '',
+        expires_at,
+        updated_at: new Date().toISOString()
+      };
+      const { error: upErr } = await supabase.from('ml_credentials').upsert(up, { onConflict: 'id' });
       if (upErr) throw upErr;
 
       emitAlert({ type: 'sync', message: 'Token ML actualizado', channel: 'ml' });
@@ -367,10 +364,36 @@ const { error: upErr } = await supabase.from('ml_credentials').upsert(up, { onCo
     void loadUsers(1)
   }
 
+  // ====== EFECTOS DE SINCRONIZACIÓN ======
+  // Montaje inicial
   useEffect(() => {
-    // Cargar credenciales (para modal) y estado real (health)
     Promise.all([loadMlCreds(), fetchHealth()]).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Cuando cambia la sesión (login/logout)
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+      fetchHealth();
+      loadMlCreds();
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Cuando vuelve del OAuth (?meli=ok)
+  useEffect(() => {
+    const qp = new URLSearchParams(window.location.search);
+    if (qp.get('meli') === 'ok') {
+      fetchHealth();
+      loadMlCreds();
+    }
+  }, []);
+
+  // Al recuperar foco (evita estados viejos)
+  useEffect(() => {
+    const onFocus = () => { fetchHealth(); loadMlCreds(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, []);
 
   useEffect(() => {
@@ -563,11 +586,14 @@ const { error: upErr } = await supabase.from('ml_credentials').upsert(up, { onCo
             <p className="text-neutral-500">Cargando estado…</p>
           ) : (
             <>
-              <div className="flex items-center gap-2 mb-2">
+              <div className="flex items-center gap-2 mb-1">
                 {connected ? (
                   <>
                     <CheckCircle className="text-green-600" size={18} />
                     <span className="text-green-700 font-semibold">Conectado</span>
+                    {health?.nickname && (
+                      <span className="text-neutral-500 text-sm">@{health.nickname}</span>
+                    )}
                   </>
                 ) : (
                   <>
@@ -616,8 +642,10 @@ const { error: upErr } = await supabase.from('ml_credentials').upsert(up, { onCo
                 </button>
 
                 <button
-                    onClick={disconnectMl}
-                    disabled={!health?.connected || mlLoading || saving}
+                  onClick={disconnectMl}
+                  disabled={!health?.connected || mlLoading || saving}
+                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border hover:bg-neutral-50 disabled:opacity-50"
+                  title="Desconectar y borrar credenciales almacenadas"
                 >
                   <Unplug size={16} />
                   Desconectar
@@ -629,12 +657,10 @@ const { error: upErr } = await supabase.from('ml_credentials').upsert(up, { onCo
 
         {/* Otras tarjetas */}
         <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6 hover:shadow-lg transition-shadow">
-          <div className="flex items-center space-x-3 mb-4">
-            <div className="p-3 bg-green-100 text-green-600 rounded-lg">
-              <Upload size={24} />
-            </div>
-            <h3 className="text-lg font-bold text-neutral-900">Carga Masiva</h3>
+          <div className="p-3 bg-green-100 text-green-600 rounded-lg">
+            <Upload size={24} />
           </div>
+          <h3 className="text-lg font-bold text-neutral-900 mt-4 mb-2">Carga Masiva</h3>
           <p className="text-neutral-600 mb-6">Importar productos desde archivos Excel o CSV…</p>
           <button className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition-colors">
             Cargar Archivo Excel
