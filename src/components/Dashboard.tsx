@@ -129,28 +129,54 @@ type LowGroup = {
 };
 
 const lowByChannelAll: LowGroup[] = useMemo(() => {
+  const channelRank = { B2B: 0, Web: 1, ML: 2 } as const;
+
   const out: LowGroup[] = [];
   for (const p of filtered) {
-    const low: { channel: 'B2B' | 'Web' | 'ML'; value: number }[] = [];
-    if ((p.stockb2b || 0) < THRESHOLD) low.push({ channel: 'B2B', value: p.stockb2b || 0 });
-    if ((p.stockweb || 0) < THRESHOLD) low.push({ channel: 'Web', value: p.stockweb || 0 });
-    if ((p.stockml  || 0) < THRESHOLD) low.push({ channel: 'ML',  value: p.stockml  || 0 });
-    if (low.length > 0) out.push({ id: p.id, name: p.name, sku: p.sku, low });
+    const low: LowGroup['low'] = [];
+    const b2b = p.stockb2b || 0;
+    const web = p.stockweb || 0;
+    const ml  = p.stockml  || 0;
+
+    if (b2b < THRESHOLD) low.push({ channel: 'B2B', value: b2b });
+    if (web < THRESHOLD) low.push({ channel: 'Web', value: web });
+    if (ml  < THRESHOLD) low.push({ channel: 'ML',  value: ml  });
+
+    if (low.length > 0) {
+      // Ordena chips dentro de la fila: B2B → Web → ML
+      low.sort((a, b) => channelRank[a.channel] - channelRank[b.channel]);
+      out.push({ id: p.id, name: p.name, sku: p.sku, low });
+    }
   }
-  return out;
-}, [filtered]);
+
+  // Ordena filas por lo más crítico (stock mínimo asc) y luego por nombre
+  return out.sort((a, b) => {
+    const minA = Math.min(...a.low.map(x => x.value));
+    const minB = Math.min(...b.low.map(x => x.value));
+    if (minA !== minB) return minA - minB;
+    return a.name.localeCompare(b.name);
+  });
+}, [filtered, THRESHOLD]);
 
 
-  // Filtro de canal solo para la tarjeta
-  const lowByChannelFiltered = useMemo(() => {
-    const base = channelFilter === 'all'
-      ? lowByChannelAll
-      : lowByChannelAll.filter(e => e.channel === channelFilter);
-    // reset de página si el filtro reduce resultados
-    setAlertPage(1);
-    return base;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lowByChannelAll, channelFilter]);
+
+// Filtro de canal solo para la tarjeta (opera sobre 'low' de cada producto)
+const lowByChannelFiltered = useMemo(() => {
+  const base = channelFilter === 'all'
+    ? lowByChannelAll
+    : lowByChannelAll
+        .map(g => ({
+          ...g,
+          low: g.low.filter(l => l.channel === channelFilter),
+        }))
+        .filter(g => g.low.length > 0); // descarta filas sin ese canal
+
+  // reset de página al cambiar filtro
+  setAlertPage(1);
+  return base;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [lowByChannelAll, channelFilter]);
+
 
   // Paginación local sobre alertas
   const alertTotal = lowByChannelFiltered.length;
