@@ -1,4 +1,6 @@
 // src/components/Admin.tsx
+const CREDS_ID = '00000000-0000-0000-0000-000000000001'; // UUID fijo para fila única
+
 import { useEffect, useMemo, useState } from 'react'
 import {
   Settings,
@@ -186,43 +188,44 @@ export const Admin = ({ user }: AdminProps) => {
   }, [health]);
 
   const fetchHealth = async () => {
-    try {
-      const url = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL + '/meli-health';
-      const r = await fetch(url);
-      const j = (await r.json()) as Health;
-      setHealth(j);
-    } catch {
-      setHealth({ connected: false, reason: 'fetch_error' });
-    }
-  };
+  try {
+    const { data, error } = await supabase.functions.invoke('meli-health', { body: {} });
+    if (error) throw error;
+    setHealth(data as Health);
+  } catch (e) {
+    console.error('meli-health error:', e);
+    setHealth({ connected: false, reason: 'fetch_error' });
+  }
+};
+
 
   const loadMlCreds = async () => {
-    setMlLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('ml_credentials')
-        .select('*')
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) throw error;
-      setMlCreds(data as any);
-      if (data) {
-        setMlForm({
-          access_token: (data as any).access_token || '',
-          refresh_token: (data as any).refresh_token || '',
-          expires_at: (data as any).expires_at || ''
-        });
-      } else {
-        setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
-      }
-    } catch (e: any) {
-      console.error('Error cargando ml_credentials:', e);
-      setMlCreds(null);
-    } finally {
-      setMlLoading(false);
+  setMlLoading(true);
+  try {
+    const { data, error } = await supabase
+      .from('ml_credentials')
+      .select('*')
+      .eq('id', CREDS_ID)
+      .maybeSingle();
+    if (error) throw error;
+    setMlCreds(data as any);
+    if (data) {
+      setMlForm({
+        access_token: (data as any).access_token || '',
+        refresh_token: (data as any).refresh_token || '',
+        expires_at: (data as any).expires_at || ''
+      });
+    } else {
+      setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
     }
-  };
+  } catch (e: any) {
+    console.error('Error cargando ml_credentials:', e);
+    setMlCreds(null);
+  } finally {
+    setMlLoading(false);
+  }
+};
+
 
   const saveMlCreds = async () => {
     if (!mlForm.access_token || !mlForm.refresh_token || !mlForm.expires_at) {
@@ -242,12 +245,14 @@ export const Admin = ({ user }: AdminProps) => {
       }
 
       const payload = {
-        access_token: mlForm.access_token,
-        refresh_token: mlForm.refresh_token,
-        expires_at: exp,
-        updated_at: new Date().toISOString()
-      };
-      const { error } = await supabase.from('ml_credentials').upsert(payload, { onConflict: 'id' });
+  id: CREDS_ID,
+  access_token: mlForm.access_token,
+  refresh_token: mlForm.refresh_token,
+  expires_at: exp,
+  updated_at: new Date().toISOString()
+    };
+    const { error } = await supabase.from('ml_credentials').upsert(payload, { onConflict: 'id' });
+
       if (error) throw error;
       emitAlert({ type: 'sync', message: 'Credenciales ML guardadas', channel: 'ml' });
       await Promise.all([loadMlCreds(), fetchHealth()]);
@@ -261,18 +266,19 @@ export const Admin = ({ user }: AdminProps) => {
   };
 
   const disconnectMl = async () => {
-    if (!confirm('¿Desconectar Mercado Libre? Se eliminarán las credenciales guardadas.')) return;
-    try {
-      const { error } = await supabase.from('ml_credentials').delete().neq('id', ''); // borra todas
-      if (error) throw error;
-      setMlCreds(null);
-      setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
-      emitAlert({ type: 'error', message: 'Mercado Libre desconectado', channel: 'ml' });
-      await fetchHealth();
-    } catch (e: any) {
-      emitAlert({ type: 'error', message: `No se pudo desconectar: ${e.message || e}`, channel: 'ml' });
-    }
-  };
+  if (!confirm('¿Desconectar Mercado Libre? Se eliminarán las credenciales guardadas.')) return;
+  try {
+    const { error } = await supabase.from('ml_credentials').delete().eq('id', CREDS_ID);
+    if (error) throw error;
+    setMlCreds(null);
+    setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
+    emitAlert({ type: 'error', message: 'Mercado Libre desconectado', channel: 'ml' });
+    await fetchHealth(); // ← fuerza a leer el estado real de la función
+  } catch (e: any) {
+    emitAlert({ type: 'error', message: `No se pudo desconectar: ${e.message || e}`, channel: 'ml' });
+  }
+};
+
 
   const startMeliOAuth = async () => {
     try {
@@ -295,12 +301,14 @@ export const Admin = ({ user }: AdminProps) => {
       const expires_at = new Date(Date.now() + Number(expires_in) * 1000).toISOString();
 
       const up = {
-        access_token,
-        refresh_token: refresh_token || mlCreds?.refresh_token || '',
-        expires_at,
-        updated_at: new Date().toISOString()
-      };
-      const { error: upErr } = await supabase.from('ml_credentials').upsert(up, { onConflict: 'id' });
+  id: CREDS_ID,
+  access_token,
+  refresh_token: refresh_token || mlCreds?.refresh_token || '',
+  expires_at,
+  updated_at: new Date().toISOString()
+};
+const { error: upErr } = await supabase.from('ml_credentials').upsert(up, { onConflict: 'id' });
+
       if (upErr) throw upErr;
 
       emitAlert({ type: 'sync', message: 'Token ML actualizado', channel: 'ml' });
