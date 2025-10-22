@@ -40,7 +40,7 @@ type Health = {
   now_ms?: number;
 };
 
-export const ChannelView = ({ channel }: ChannelViewProps) => {
+export default function ChannelView({ channel }: ChannelViewProps) {
   const [products, setProducts] = useState<Product[]>([]);
   const [mlLinks, setMlLinks] = useState<Record<string, MLLink>>({});
   const [health, setHealth] = useState<Health | null>(null);
@@ -50,7 +50,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [lastSync, setLastSync] = useState(new Date());
 
-  // Config canal
+  // Config por canal
   const channelConfig = {
     wordpress: {
       title: 'WordPress',
@@ -69,7 +69,6 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   };
   const config = channelConfig[channel];
 
-  // Helpers
   const formatDate = (date: Date) =>
     date.toLocaleString('es-CL', {
       day: '2-digit',
@@ -85,52 +84,48 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     return Math.floor((health.expires_at_ms - health.now_ms) / 60000);
   }, [health]);
 
-  // ===== Fetchers =====
+  // ============ LOADERS ============
   const fetchHealth = async () => {
-    try {
-      const url = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL + '/meli-health';
-      const r = await fetch(url, { method: 'GET' });
-      const j = (await r.json()) as Health;
-      setHealth(j);
-    } catch {
+    // Invoca Supabase Function (POST por defecto)
+    const { data, error } = await supabase.functions.invoke('meli-health');
+    if (error) {
       setHealth({ connected: false });
+    } else {
+      setHealth(data as Health);
     }
   };
 
   const fetchProducts = async () => {
-  // Solo traer productos con stockml > 0
-  const { data, error } = await supabase
-    .from('productos')
-    .select('id, name, sku, categoria, price, stockb2b, stockweb, stockml')
-    .gt('stockml', 0) // 👈 FILTRA AQUÍ
-    .order('id', { ascending: true });
+    // SOLO productos con stockml > 0
+    const { data, error } = await supabase
+      .from('productos')
+      .select('id, name, sku, categoria, price, stockb2b, stockweb, stockml')
+      .gt('stockml', 0)
+      .order('id', { ascending: true });
 
-  if (error) {
-    console.error('Error al cargar productos:', error);
-    setProducts([]);
-    return;
-  }
-
-  const rows = (data as any[]).map((p) => ({
-    id: Number(p.id),
-    name: p.name,
-    sku: p.sku,
-    categoria: p.categoria ?? '',
-    price: Number(p.price) || 0,
-    stockb2b: Number(p.stockb2b) || 0,
-    stockweb: Number(p.stockweb) || 0,
-    stockml: Number(p.stockml) || 0,
-  })) as Product[];
-
-  setProducts(rows);
-};
-
-
+    if (error) {
+      console.error('Error al cargar productos:', error);
+      setProducts([]);
+      return;
+    }
+    const rows = (data as any[]).map((p) => ({
+      id: Number(p.id),
+      name: p.name,
+      sku: p.sku,
+      categoria: p.categoria ?? '',
+      price: Number(p.price) || 0,
+      stockb2b: Number(p.stockb2b) || 0,
+      stockweb: Number(p.stockweb) || 0,
+      stockml: Number(p.stockml) || 0,
+    })) as Product[];
+    setProducts(rows);
+  };
 
   const fetchMlLinks = async () => {
     const { data, error } = await supabase
       .from('ml_links')
       .select('sku, meli_item_id, meli_variation_id');
+
     if (error) {
       console.error('Error leyendo ml_links:', error);
       setMlLinks({});
@@ -150,14 +145,11 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   const handleSyncAll = async () => {
     try {
       setSyncing(true);
-      // 1) Pull desde ML → llena ml_links y actualiza stockml
-      const pullUrl = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL + '/meli-pull';
-      await fetch(pullUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: 'manual' }),
+      // POST /meli-pull (SDK)
+      const { error } = await supabase.functions.invoke('meli-pull', {
+        body: { reason: 'manual' },
       });
-      // 2) Refrescar datos locales
+      if (error) console.error(error);
       await Promise.all([fetchProducts(), fetchMlLinks(), fetchHealth()]);
       setLastSync(new Date());
     } finally {
@@ -173,7 +165,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     })();
     const interval = setInterval(() => {
       fetchHealth();
-    }, 1000 * 60 * 3); // cada 3 min solo el health
+    }, 1000 * 60 * 3);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -193,39 +185,34 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     [tableRows]
   );
 
-  // ===== Acciones fila =====
+  // ============ ACCIONES FILA ============
   async function publicarEnML(p: Product) {
-    // Publica (POST /meli-post) y empareja (sku -> item_id), luego refresca ml_links
-    const url = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL + '/meli-post';
-    // Mínimos de ejemplo para categoría MLC3530 (ajusta si usas otra)
-    const body = {
-      sku: p.sku,
-      title: 'Item de Prueba - Por favor, NO OFERTAR', // o p.name si ya está validado
-      category_id: 'MLC3530',
-      price: p.price || 9900,
-      available_quantity: p.stockml || 1,
-      pictures: ['https://http2.mlstatic.com/D_NQ_NP_2X_000000-MLC0000000000_000000-F.jpg'],
-      attributes: [
-        { id: 'BRAND', value_name: 'Genérica' },
-        { id: 'MODEL', value_name: 'Prueba' },
-      ],
-      condition: 'new' as const,
-      listing_type_id: 'gold_special',
-      currency_id: 'CLP',
-      buying_mode: 'buy_it_now' as const,
-    };
-
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+    const { data, error } = await supabase.functions.invoke('meli-post', {
+      body: {
+        sku: p.sku,
+        title: 'Item de Prueba - Por favor, NO OFERTAR',
+        category_id: 'MLC3530',
+        price: p.price || 9900,
+        available_quantity: p.stockml || 1,
+        pictures: ['https://http2.mlstatic.com/D_NQ_NP_2X_000000-MLC0000000000_000000-F.jpg'],
+        attributes: [
+          { id: 'BRAND', value_name: 'Genérica' },
+          { id: 'MODEL', value_name: 'Prueba' },
+        ],
+        condition: 'new',
+        listing_type_id: 'gold_special',
+        currency_id: 'CLP',
+        buying_mode: 'buy_it_now',
+      },
     });
-    const j = await r.json();
-    if (!j?.ok) {
-      throw new Error(
-        `Fallo al publicar. Status=${j?.status ?? 'unknown'} Error=${JSON.stringify(j?.error ?? j)}`
-      );
+
+    if (error || !(data as any)?.ok) {
+      const msg =
+        error?.message ||
+        `Fallo al publicar: ${JSON.stringify((data as any)?.error ?? data)}`;
+      throw new Error(msg);
     }
+    // Refrescar links; si stockml subió desde la función, también aparecerá aquí.
     await fetchMlLinks();
   }
 
@@ -233,16 +220,14 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     try {
       setRowBusy(p.sku);
       if (!connected) throw new Error('Mercado Libre desconectado. Conecta antes de continuar.');
-
       const link = mlLinks[p.sku];
       if (link?.meli_item_id) {
-        // Ya está publicado → solo refrescamos estado desde ML
-        await handleSyncAll();
-        alert(`Estado sincronizado desde ML para SKU ${p.sku}.`);
+        await handleSyncAll(); // refresca estado desde ML
+        alert(`Estado sincronizado para SKU ${p.sku}.`);
       } else {
-        // No publicado → publicar ahora
         await publicarEnML(p);
         alert(`Publicado en ML: ${p.name} (SKU ${p.sku}).`);
+        await handleSyncAll();
       }
     } catch (e: any) {
       console.error(e);
@@ -313,13 +298,13 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
           )}
         </div>
 
-        {/* Productos con link ML */}
+        {/* Productos publicados */}
         <div className="bg-white rounded-xl shadow-sm border border-neutral-200 p-6">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">Productos</h3>
           </div>
           <p className="text-2xl font-bold text-neutral-900">{totalLinked}/{tableRows.length}</p>
-          <p className="text-sm text-neutral-500 mt-1">publicados / totales</p>
+          <p className="text-sm text-neutral-500 mt-1">publicados / visibles (stock ML &gt; 0)</p>
         </div>
 
         {/* Stock ML total */}
@@ -328,7 +313,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
             <h3 className="text-sm font-semibold text-neutral-600 uppercase tracking-wide">Stock ML Total</h3>
           </div>
           <p className="text-2xl font-bold text-neutral-900">{totalStock}</p>
-          <p className="text-sm text-neutral-500 mt-1">unidades (sumadas)</p>
+          <p className="text-sm text-neutral-500 mt-1">unidades</p>
         </div>
 
         {/* Acción masiva */}
@@ -437,7 +422,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
               {tableRows.length === 0 && (
                 <tr>
                   <td colSpan={6} className="text-center py-6 text-neutral-500">
-                    No hay productos para mostrar.
+                    No hay productos para mostrar (stock ML ≤ 0).
                   </td>
                 </tr>
               )}
@@ -447,4 +432,4 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
       </div>
     </div>
   );
-};
+}
