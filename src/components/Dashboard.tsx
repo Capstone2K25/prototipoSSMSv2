@@ -120,18 +120,26 @@ async function syncAndReload() {
       .slice(0, 5);
   }, [filtered]);
 
-  // Alertas de stock bajo por canal (filtrado global)
-  type LowEntry = { id: number; name: string; sku: string; channel: 'B2B' | 'Web' | 'ML'; value: number };
-  const lowByChannelAll: LowEntry[] = useMemo(() => {
-    const out: LowEntry[] = [];
-    for (const p of filtered) {
-      if ((p.stockb2b || 0) < THRESHOLD) out.push({ id: p.id, name: p.name, sku: p.sku, channel: 'B2B', value: p.stockb2b || 0 });
-      if ((p.stockweb || 0) < THRESHOLD) out.push({ id: p.id, name: p.name, sku: p.sku, channel: 'Web', value: p.stockweb || 0 });
-      if ((p.stockml  || 0) < THRESHOLD) out.push({ id: p.id, name: p.name, sku: p.sku, channel: 'ML',  value: p.stockml  || 0 });
-    }
-    const channelRank = { B2B: 0, Web: 1, ML: 2 } as const;
-    return out.sort((a, b) => (a.value - b.value) || (channelRank[a.channel] - channelRank[b.channel]));
-  }, [filtered]);
+  // Alertas de stock bajo agrupadas por producto
+type LowGroup = {
+  id: number;
+  name: string;
+  sku: string;
+  low: { channel: 'B2B' | 'Web' | 'ML'; value: number }[];
+};
+
+const lowByChannelAll: LowGroup[] = useMemo(() => {
+  const out: LowGroup[] = [];
+  for (const p of filtered) {
+    const low: { channel: 'B2B' | 'Web' | 'ML'; value: number }[] = [];
+    if ((p.stockb2b || 0) < THRESHOLD) low.push({ channel: 'B2B', value: p.stockb2b || 0 });
+    if ((p.stockweb || 0) < THRESHOLD) low.push({ channel: 'Web', value: p.stockweb || 0 });
+    if ((p.stockml  || 0) < THRESHOLD) low.push({ channel: 'ML',  value: p.stockml  || 0 });
+    if (low.length > 0) out.push({ id: p.id, name: p.name, sku: p.sku, low });
+  }
+  return out;
+}, [filtered]);
+
 
   // Filtro de canal solo para la tarjeta
   const lowByChannelFiltered = useMemo(() => {
@@ -366,24 +374,29 @@ async function syncAndReload() {
             <>
               <div className="space-y-3">
                 {alertsPageData.map(entry => (
-                  <div key={`${entry.id}-${entry.channel}`} className="flex items-center justify-between border-b pb-3 last:border-0">
+                  <div key={entry.id} className="flex items-center justify-between border-b pb-3 last:border-0">
                     <div className="min-w-0">
                       <p className="font-semibold text-neutral-900 truncate">{entry.name}</p>
                       <p className="text-xs text-neutral-500">{entry.sku}</p>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className={`px-2 py-1 rounded text-xs font-semibold
-                        ${entry.channel === 'B2B' ? 'bg-fuchsia-100 text-fuchsia-700'
-                          : entry.channel === 'Web' ? 'bg-blue-100 text-blue-700'
-                          : 'bg-amber-100 text-amber-700'}`}>
-                        {entry.channel}
-                      </span>
-                      <span className={`text-sm font-bold ${entry.value < 5 ? 'text-red-600' : 'text-orange-600'}`}>
-                        {entry.value}
-                      </span>
+                    <div className="flex flex-wrap gap-2 justify-end">
+                      {entry.low.map(l => (
+                        <div key={l.channel} className="flex items-center gap-2">
+                          <span className={`px-2 py-1 rounded text-xs font-semibold
+                            ${l.channel === 'B2B' ? 'bg-fuchsia-100 text-fuchsia-700'
+                              : l.channel === 'Web' ? 'bg-blue-100 text-blue-700'
+                              : 'bg-amber-100 text-amber-700'}`}>
+                            {l.channel}
+                          </span>
+                          <span className={`text-sm font-bold ${l.value < 5 ? 'text-red-600' : 'text-orange-600'}`}>
+                            {l.value}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}
+
               </div>
 
               {/* Paginación de alertas */}
