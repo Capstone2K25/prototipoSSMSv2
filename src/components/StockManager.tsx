@@ -1,3 +1,4 @@
+// src/components/StockManager.tsx
 import { useEffect, useMemo, useRef, useState, startTransition } from 'react';
 import { Plus, Pencil, Trash2, X, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -5,70 +6,95 @@ import { supabase } from '../supabaseClient';
 import { emitAlert } from '../state/alertsBus';
 import { wooCreateProductLocal, wooDeleteProductLocal, wooPushStockLocal } from '../data/woo';
 
+type LookupCat = { id: number; name: string };
+type LookupVar = { id: number; name: string };
+type LookupCol = { id: number; name: string };
+type LookupTal = { id: number; tipo: 'alfanumerica' | 'numerica'; etiqueta: string; orden: number | null };
+
 type Product = {
   id: number;
   name: string;
   sku: string;
-  price: number | string;
-  categoria?: string | null;
+  price: number;
+  // FKs
+  categoria_id: number | null;
+  variante_id: number | null;
+  color_id: number | null;
+  talla_id: number | null;
+  // stocks
   stockb2b: number;
   stockweb: number;
   stockml: number;
+  // Derivados para UI
+  categoria_nombre?: string;
+  variante_nombre?: string;
+  color_nombre?: string;
+  talla_etiqueta?: string;
 };
 
-type SortField = 'name' | 'sku' | 'categoria' | 'price' | 'stockb2b' | 'stockweb' | 'stockml';
+type SortField =
+  | 'name' | 'sku' | 'price'
+  | 'stockb2b' | 'stockweb' | 'stockml'
+  | 'categoria_nombre' | 'variante_nombre' | 'color_nombre' | 'talla_etiqueta';
 type SortOrder = 'asc' | 'desc';
 
-// ---------- Helpers numéricos ----------
 const toInt = (s: unknown) => {
   const n = parseInt(String(s ?? '').replace(/\s+/g, ''), 10);
   return Number.isFinite(n) ? n : 0;
 };
 
-export const StockManager = () => {
-  // Categorías (puedes cargar de BD si quieres)
-  const CATEGORIES = ['Ropa','Pantalones','Shorts','Poleras','Polerones','Gorros','Accesorios','Chaquetas','Poleras manga larga'];
+// SKU helper: SKU- + 2 dígitos por cada ID (00 si null)
+const pad2 = (n: number | null | undefined) => String(n ?? 0).padStart(2, '0');
+const buildSku = (c: number | null | undefined, v: number | null | undefined, col: number | null | undefined, t: number | null | undefined) =>
+  `SKU-${pad2(c)}${pad2(v)}${pad2(col)}${pad2(t)}`;
 
-  // Datos
+export const StockManager = () => {
+  // datos
   const [products, setProducts] = useState<Product[]>([]);
   const [totalRows, setTotalRows] = useState<number>(0);
 
-  // Filtro / búsqueda
-  const [searchTerm, setSearchTerm] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('all');
+  // lookups desde BD
+  const [cats, setCats] = useState<LookupCat[]>([]);
+  const [vars, setVars] = useState<LookupVar[]>([]);
+  const [cols, setCols] = useState<LookupCol[]>([]);
+  const [tallas, setTallas] = useState<LookupTal[]>([]);
 
-  // Orden
+  // filtros / búsqueda
+  const [searchTerm, setSearchTerm] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | number>('all');
+
+  // orden
   const [sortField, setSortField] = useState<SortField>('name');
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
-  // Paginación
+  // paginación
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
 
-  // Estados UI
-  const [loading, setLoading] = useState(true);   // primera carga
-  const [tableBusy, setTableBusy] = useState(false); // paginación/orden/búsqueda "silenciosa"
+  // estados UI
+  const [loading, setLoading] = useState(true);
+  const [tableBusy, setTableBusy] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string>('');
 
-  // Modal
+  // modal
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [isExistingSKU, setIsExistingSKU] = useState<boolean>(false);
 
-  // Selección múltiple
+  // selección múltiple
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
-  // Abort para evitar carreras
+  // abort
   const abortRef = useRef<AbortController | null>(null);
 
-  // Debounce búsqueda
+  // debounce búsqueda
   const [debouncedSearch, setDebouncedSearch] = useState(searchTerm);
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 300);
     return () => clearTimeout(t);
   }, [searchTerm]);
 
-  // ---------- Toast + persistencia en alerts ----------
+  // toast
   const toastAndLog = (msg: string, type: 'info' | 'error' | 'sync' = 'info') => {
     if (type === 'error') toast.error(msg);
     else if (type === 'sync') toast.success(msg);
@@ -76,7 +102,28 @@ export const StockManager = () => {
     emitAlert({ type, message: msg, channel: 'stock' });
   };
 
-  // ---------- Query a Supabase con filtros/orden/paginación ----------
+  // cargar lookups (una vez)
+  const loadLookups = async () => {
+    const [{ data: dc }, { data: dv }, { data: dco }, { data: dt }] = await Promise.all([
+      supabase.from('categorias').select('id_categoria, nombre_categoria').order('nombre_categoria', { ascending: true }),
+      supabase.from('variantes').select('id_variante, nombre_variante').order('nombre_variante', { ascending: true }),
+      supabase.from('colores').select('id_color, nombre_color').order('nombre_color', { ascending: true }),
+      supabase.from('tallas').select('id_talla, tipo, etiqueta, valor_numerico').order('tipo', { ascending: true }).order('valor_numerico', { ascending: true, nullsFirst: true }).order('etiqueta', { ascending: true }),
+    ]);
+
+    setCats((dc ?? []).map(r => ({ id: r.id_categoria, name: r.nombre_categoria })));
+    setVars((dv ?? []).map(r => ({ id: r.id_variante, name: r.nombre_variante })));
+    setCols((dco ?? []).map(r => ({ id: r.id_color, name: r.nombre_color })));
+    setTallas((dt ?? []).map(r => ({ id: r.id_talla, tipo: r.tipo, etiqueta: r.etiqueta, orden: r.valor_numerico })));
+  };
+
+  // diccionarios para resolver nombres
+  const catById = useMemo(() => Object.fromEntries(cats.map(c => [c.id, c.name])), [cats]);
+  const varById = useMemo(() => Object.fromEntries(vars.map(v => [v.id, v.name])), [vars]);
+  const colById = useMemo(() => Object.fromEntries(cols.map(c => [c.id, c.name])), [cols]);
+  const talById = useMemo(() => Object.fromEntries(tallas.map(t => [t.id, t.etiqueta])), [tallas]);
+
+  // query productos
   const fetchProducts = async (opts?: { silent?: boolean; keepSelection?: boolean }) => {
     const { silent = false, keepSelection = false } = opts || {};
     if (abortRef.current) abortRef.current.abort();
@@ -87,44 +134,66 @@ export const StockManager = () => {
       if (!silent && products.length === 0) setLoading(true);
       setTableBusy(true);
 
-      // base select con conteo exacto
       let query = supabase
         .from('productos')
-        .select('id, name, sku, price, categoria, stockb2b, stockweb, stockml', { count: 'exact' });
+        .select('id, name, sku, price, categoria_id, variante_id, color_id, talla_id, stockb2b, stockweb, stockml', { count: 'exact' });
 
-      // Filtro por categoría
+      // filtro categoría (por id)
       if (categoryFilter !== 'all') {
-        query = query.eq('categoria', categoryFilter);
+        query = query.eq('categoria_id', categoryFilter);
       }
 
-      // Búsqueda por nombre o SKU
+      // búsqueda por nombre o sku
       if (debouncedSearch) {
         const term = debouncedSearch.replace(/%/g, '').toLowerCase();
         query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%`);
       }
 
-      // Orden
-      query = query.order(sortField, { ascending: sortOrder === 'asc', nullsFirst: true });
+      // orden server-side solo donde aplique
+      const serverSortable: Array<SortField> = ['name', 'sku', 'price', 'stockb2b', 'stockweb', 'stockml'];
+      if (serverSortable.includes(sortField)) {
+        query = query.order(sortField as any, { ascending: sortOrder === 'asc', nullsFirst: true });
+      } else {
+        // fallback: ordenar por id para luego ordenar en memoria
+        query = query.order('id', { ascending: true });
+      }
 
-      // Paginación (1-based page)
+      // paginación
       const from = (page - 1) * pageSize;
       const to = from + pageSize - 1;
       query = query.range(from, to);
 
       const { data, error, count } = await query;
-
       if (error) throw error;
 
-      const mapped: Product[] = (data || []).map((p: any) => ({
+      // mapear + resolver nombres
+      let mapped: Product[] = (data || []).map((p: any) => ({
         id: Number(p.id),
         name: p.name,
         sku: p.sku,
         price: Number(p.price) || 0,
-        categoria: p.categoria ?? '',
+        categoria_id: p.categoria_id ?? null,
+        variante_id: p.variante_id ?? null,
+        color_id: p.color_id ?? null,
+        talla_id: p.talla_id ?? null,
         stockb2b: Number(p.stockb2b) || 0,
         stockweb: Number(p.stockweb) || 0,
         stockml: Number(p.stockml) || 0,
+        categoria_nombre: p.categoria_id ? catById[p.categoria_id] : '',
+        variante_nombre: p.variante_id ? varById[p.variante_id] : '',
+        color_nombre: p.color_id ? colById[p.color_id] : '',
+        talla_etiqueta: p.talla_id ? talById[p.talla_id] : '',
       }));
+
+      // orden client-side si el campo es derivado
+      if (!serverSortable.includes(sortField)) {
+        const dir = sortOrder === 'asc' ? 1 : -1;
+        mapped = [...mapped].sort((a, b) => {
+          const av = (a as any)[sortField] ?? '';
+          const bv = (b as any)[sortField] ?? '';
+          return String(av).localeCompare(String(bv), 'es', { numeric: true }) * dir;
+        });
+      }
 
       startTransition(() => {
         setProducts(mapped);
@@ -142,10 +211,12 @@ export const StockManager = () => {
     }
   };
 
-  // Carga inicial
+  // carga inicial
   useEffect(() => {
-    fetchProducts();
-    // Auto refresh (silencioso)
+    (async () => {
+      await loadLookups();
+      await fetchProducts();
+    })();
     const interval = setInterval(() => fetchProducts({ silent: true, keepSelection: true }), 100000);
     return () => {
       clearInterval(interval);
@@ -154,27 +225,21 @@ export const StockManager = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Refetch cuando cambian filtros/orden/paginación
-  useEffect(() => {
-    setPage(1);
-  }, [categoryFilter, debouncedSearch, pageSize]);
+  // refetch en cambios
+  useEffect(() => { setPage(1); }, [categoryFilter, debouncedSearch, pageSize]);
+  useEffect(() => { fetchProducts({ silent: true }); }, [sortField, sortOrder, page, pageSize, categoryFilter, debouncedSearch]); // eslint-disable-line
 
-  useEffect(() => {
-    fetchProducts({ silent: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortField, sortOrder, page, pageSize, categoryFilter, debouncedSearch]);
-
-  // ---------- Orden ----------
+  // orden
   const handleSort = (field: SortField) => {
     const nextOrder: SortOrder = sortField === field && sortOrder === 'asc' ? 'desc' : 'asc';
     setSortField(field);
     setSortOrder(nextOrder);
   };
 
-  // ---------- Filtrado local ----------
+  // totales
   const stockTotal = (p: Product) => (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0);
 
-  // ---------- Utilidades UI ----------
+  // util UI
   const formatPrice = (price: number) =>
     new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(price);
 
@@ -184,7 +249,7 @@ export const StockManager = () => {
     return { color: 'text-green-700', bg: 'bg-green-50', label: 'Normal' };
   };
 
-  // ---------- Selección ----------
+  // selección
   const toggleSelect = (id: number) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
   };
@@ -197,50 +262,39 @@ export const StockManager = () => {
     else setSelectedIds(products.map((p) => p.id));
   };
 
-  // ---------- Eliminar seleccionados ----------
+  // eliminar
   const deleteSelected = async () => {
-  if (selectedIds.length === 0) return toast.error('No hay productos seleccionados.');
-  if (!confirm(`¿Eliminar ${selectedIds.length} producto(s) en BD y Woo?`)) return;
+    if (selectedIds.length === 0) return toast.error('No hay productos seleccionados.');
+    if (!confirm(`¿Eliminar ${selectedIds.length} producto(s) en BD y Woo?`)) return;
 
-  // Productos seleccionados (para tener los SKUs)
-  const selectedProducts = products.filter(p => selectedIds.includes(p.id));
-  const skus = selectedProducts.map(p => String(p.sku));
+    const selectedProducts = products.filter(p => selectedIds.includes(p.id));
+    const skus = selectedProducts.map(p => String(p.sku));
 
-  // 1) Borrado en Woo (best-effort, en paralelo)
-  const results = await Promise.allSettled(
-    skus.map(sku => wooDeleteProductLocal(sku))
-  );
+    const results = await Promise.allSettled(skus.map(sku => wooDeleteProductLocal(sku)));
+    const okWoo = results.filter(r => r.status === 'fulfilled').length;
+    const failWoo = results.length - okWoo;
+    if (failWoo > 0) console.warn('Woo delete falló en', failWoo, 'elementos', results);
 
-  const okWoo = results.filter(r => r.status === 'fulfilled').length;
-  const failWoo = results.length - okWoo;
+    const { error } = await supabase.from('productos').delete().in('id', selectedIds);
+    if (error) {
+      console.error(error);
+      toastAndLog(error.message || 'Error al eliminar productos en BD.', 'error');
+      return;
+    }
 
-  if (failWoo > 0) {
-    console.warn('Woo delete falló en', failWoo, 'elementos', results);
-  }
+    selectedProducts.forEach(p =>
+      emitAlert({ type: 'error', message: `Producto eliminado: ${p.name} (SKU ${p.sku})`, channel: 'stock' })
+    );
+    toast.success(`Eliminados ${selectedIds.length} en BD. Woo: ${okWoo} ok / ${failWoo} fallo(s).`);
 
-  // 2) Borrado en Supabase
-  const { error } = await supabase.from('productos').delete().in('id', selectedIds);
-  if (error) {
-    console.error(error);
-    toastAndLog(error.message || 'Error al eliminar productos en BD.', 'error');
-    return;
-  }
+    const remaining = totalRows - selectedIds.length;
+    const lastPage = Math.max(1, Math.ceil(remaining / pageSize));
+    setSelectedIds([]);
+    if (page > lastPage) setPage(lastPage);
+    else fetchProducts({ silent: true });
+  };
 
-  // Alertas + toasts
-  selectedProducts.forEach(p =>
-    emitAlert({ type: 'error', message: `Producto eliminado: ${p.name} (SKU ${p.sku})`, channel: 'stock' })
-  );
-  toast.success(`Eliminados ${selectedIds.length} en BD. Woo: ${okWoo} ok / ${failWoo} fallo(s).`);
-
-  // 3) Ajuste de paginación y refresco
-  const remaining = totalRows - selectedIds.length;
-  const lastPage = Math.max(1, Math.ceil(remaining / pageSize));
-  setSelectedIds([]);
-  if (page > lastPage) setPage(lastPage);
-  else fetchProducts({ silent: true });
-};
-
-  // ---------- Buscar SKU al salir del input ----------
+  // buscar SKU
   const handleSKUBlur = async () => {
     const sku = editingProduct?.sku?.toString()?.trim();
     if (!sku) return;
@@ -248,21 +302,23 @@ export const StockManager = () => {
     try {
       const { data, error } = await supabase
         .from('productos')
-        .select('id, name, sku, price, categoria, stockb2b, stockweb, stockml')
+        .select('id, name, sku, price, categoria_id, variante_id, color_id, talla_id, stockb2b, stockweb, stockml')
         .eq('sku', sku)
         .maybeSingle();
 
       if (error) throw error;
 
       if (data) {
-        // SKU existente -> deltas como string (permiten "-")
         setIsExistingSKU(true);
         setEditingProduct({
           id: Number(data.id),
           name: data.name,
           sku: data.sku,
           price: Number(data.price) || 0,
-          categoria: data.categoria ?? '',
+          categoria_id: data.categoria_id,
+          variante_id: data.variante_id,
+          color_id: data.color_id,
+          talla_id: data.talla_id,
           _originalstockb2b: Number(data.stockb2b) || 0,
           _originalstockweb: Number(data.stockweb) || 0,
           _originalstockml:  Number(data.stockml)  || 0,
@@ -270,7 +326,7 @@ export const StockManager = () => {
           stockweb: '',
           stockml:  '',
         });
-        toastAndLog(`SKU encontrado: ${data.name} (SKU ${data.sku}) — solo suma/resta de stock habilitada`, 'info');
+        toastAndLog(`SKU encontrado: ${data.name} — solo suma/resta de stock`, 'info');
       } else {
         setIsExistingSKU(false);
         setEditingProduct((prev: any) => ({
@@ -279,7 +335,7 @@ export const StockManager = () => {
           stockweb: '',
           stockml:  ''
         }));
-        toastAndLog(`SKU no encontrado: ${sku} — completa los datos para crear nuevo producto`, 'info');
+        toastAndLog(`SKU no encontrado: ${sku} — completa para crear`, 'info');
       }
     } catch (err) {
       console.error('Error buscando SKU:', err);
@@ -287,164 +343,160 @@ export const StockManager = () => {
     }
   };
 
-  // ---------- Guardar (insert/update) ----------
+  // guardar
   const saveProduct = async () => {
-  if (!editingProduct?.sku) return toast.error('El SKU es obligatorio.');
+    if (!editingProduct?.sku) return toast.error('El SKU es obligatorio.');
 
-  try {
-    if (isExistingSKU) {
-      // -------- EDITAR: deltas (permiten negativos)
-      const origB2B = Number(editingProduct._originalstockb2b || 0);
-      const origWeb = Number(editingProduct._originalstockweb || 0);
-      const origMl  = Number(editingProduct._originalstockml  || 0);
+    try {
+      if (isExistingSKU) {
+        // EDITAR: deltas
+        const origB2B = Number(editingProduct._originalstockb2b || 0);
+        const origWeb = Number(editingProduct._originalstockweb || 0);
+        const origMl  = Number(editingProduct._originalstockml  || 0);
 
-      const deltaB2B = toInt(editingProduct.stockb2b);
-      const deltaWeb = toInt(editingProduct.stockweb);
-      const deltaMl  = toInt(editingProduct.stockml);
+        const deltaB2B = toInt(editingProduct.stockb2b);
+        const deltaWeb = toInt(editingProduct.stockweb);
+        const deltaMl  = toInt(editingProduct.stockml);
 
-      if (deltaB2B === 0 && deltaWeb === 0 && deltaMl === 0) {
-        return toast.error('No ingresaste ningún cambio de stock.');
-      }
+        if (deltaB2B === 0 && deltaWeb === 0 && deltaMl === 0) {
+          return toast.error('No ingresaste ningún cambio de stock.');
+        }
 
-      const nuevos = {
-        stockb2b: origB2B + deltaB2B,
-        stockweb: origWeb + deltaWeb,
-        stockml:  origMl  + deltaMl,
-      };
+        const nuevos = {
+          stockb2b: origB2B + deltaB2B,
+          stockweb: origWeb + deltaWeb,
+          stockml:  origMl  + deltaMl,
+        };
 
-      if (nuevos.stockb2b < 0 || nuevos.stockweb < 0 || nuevos.stockml < 0) {
-        return toast.error('El stock no puede quedar negativo.');
-      }
+        if (nuevos.stockb2b < 0 || nuevos.stockweb < 0 || nuevos.stockml < 0) {
+          return toast.error('El stock no puede quedar negativo.');
+        }
 
-      let res;
-      if (editingProduct?.id) {
-        res = await supabase
-          .from('productos')
-          .update(nuevos)
-          .eq('id', Number(editingProduct.id))
-          .select()
-          .maybeSingle();
+        let res;
+        if (editingProduct?.id) {
+          res = await supabase.from('productos').update(nuevos).eq('id', Number(editingProduct.id)).select().maybeSingle();
+        } else {
+          res = await supabase.from('productos').update(nuevos).eq('sku', editingProduct.sku.toString().trim()).select().maybeSingle();
+        }
+
+        const { data, error } = res;
+        if (error) {
+          console.error('Error al actualizar stock:', error);
+          return toastAndLog(error.message || 'Error al actualizar stock.', 'error');
+        }
+        if (!data) return toastAndLog('No se actualizó ninguna fila (SKU o ID no encontrado).', 'error');
+
+        try {
+          await wooPushStockLocal(String(editingProduct.sku), Number(nuevos.stockweb));
+        } catch (e) {
+          console.error("WC push error:", e);
+          toastAndLog("Guardado en BD, pero falló la sync con Woo.", "error");
+        }
+
+        const name = editingProduct?.name || data.name || '(sin nombre)';
+        const sku  = editingProduct?.sku  || data.sku;
+        const totalAntes   = origB2B + origWeb + origMl;
+        const totalDespues = nuevos.stockb2b + nuevos.stockweb + nuevos.stockml;
+
+        toastAndLog(
+          `Stock actualizado: ${name} (SKU ${sku}) • B2B ${origB2B}→${nuevos.stockb2b} | Web ${origWeb}→${nuevos.stockweb} | ML ${origMl}→${nuevos.stockml} • Total ${totalAntes}→${totalDespues}`,
+          'sync'
+        );
       } else {
-        res = await supabase
-          .from('productos')
-          .update(nuevos)
-          .eq('sku', editingProduct.sku.toString().trim())
-          .select()
-          .maybeSingle();
+        // CREAR
+        const name = (editingProduct.name || '').toString().trim();
+        const price = toInt(editingProduct.price);
+        const categoria_id = Number(editingProduct.categoria_id || 0) || null;
+        const variante_id  = Number(editingProduct.variante_id  || 0) || null;
+        const color_id     = Number(editingProduct.color_id     || 0) || null;
+        const talla_id     = Number(editingProduct.talla_id     || 0) || null;
+        const sku = editingProduct.sku.toString().trim();
+
+        if (!name || !sku || !price || !categoria_id || !variante_id || !color_id || !talla_id) {
+          return toast.error('Completa nombre, precio, categoría, variante, color y talla.');
+        }
+
+        const sB2B = Math.max(0, toInt(editingProduct.stockb2b));
+        const sWeb = Math.max(0, toInt(editingProduct.stockweb));
+        const sML  = Math.max(0, toInt(editingProduct.stockml));
+
+        const newProd = { name, sku, price, categoria_id, variante_id, color_id, talla_id, stockb2b: sB2B, stockweb: sWeb, stockml: sML };
+
+        const { error } = await supabase.from('productos').insert(newProd);
+        if (error) {
+          console.error('Error al crear producto:', error);
+          return toastAndLog(error.message || 'Error al crear producto.', 'error');
+        }
+
+        try {
+          const resWoo = await wooCreateProductLocal({
+            skuLocal: sku,
+            name,
+            price,
+            initialStockWeb: sWeb,
+          });
+          await wooPushStockLocal(sku, sWeb);
+          toastAndLog(`Producto creado y sincronizado con Woo: ${name} (SKU Woo ${resWoo.skuWoo})`, 'sync');
+        } catch (e) {
+          console.error("Crear/Sync en Woo falló:", e);
+          toastAndLog("Producto creado en BD. No se pudo crear/actualizar en Woo.", "error");
+        }
+
+        const total = sB2B + sWeb + sML;
+        toastAndLog(
+          `Producto creado: ${newProd.name} (SKU ${newProd.sku}) • B2B ${sB2B} | Web ${sWeb} | ML ${sML} • Total ${total}`,
+          'sync'
+        );
       }
-
-      const { data, error } = res;
-      if (error) {
-        console.error('Error al actualizar stock:', error);
-        return toastAndLog(error.message || 'Error al actualizar stock.', 'error');
-      }
-      if (!data) return toastAndLog('No se actualizó ninguna fila (SKU o ID no encontrado).', 'error');
-
-      // 🔗 Empuja a Woo el stock absoluto del canal Web
-      try {
-        await wooPushStockLocal(String(editingProduct.sku), Number(nuevos.stockweb));
-      } catch (e) {
-        console.error("WC push error:", e);
-        toastAndLog("Guardado en BD, pero falló la sync con Woo.", "error");
-      }
-
-      const name = editingProduct?.name || data.name || '(sin nombre)';
-      const sku  = editingProduct?.sku  || data.sku;
-      const totalAntes   = origB2B + origWeb + origMl;
-      const totalDespues = nuevos.stockb2b + nuevos.stockweb + nuevos.stockml;
-
-      toastAndLog(
-        `Stock actualizado: ${name} (SKU ${sku}) • B2B ${origB2B}→${nuevos.stockb2b} | Web ${origWeb}→${nuevos.stockweb} | ML ${origMl}→${nuevos.stockml} • Total ${totalAntes}→${totalDespues}`,
-        'sync'
-      );
-
-    } else {
-      // -------- CREAR: stocks iniciales (solo no-negativos)
-      const name = (editingProduct.name || '').toString().trim();
-      const price = toInt(editingProduct.price);
-      const categoria = (editingProduct.categoria || '').toString().trim();
-      const sku = editingProduct.sku.toString().trim();
-
-      if (!name || !sku || !categoria || !price) {
-        return toast.error('Completa nombre, SKU, precio y categoría.');
-      }
-
-      const sB2B = Math.max(0, toInt(editingProduct.stockb2b));
-      const sWeb = Math.max(0, toInt(editingProduct.stockweb));
-      const sML  = Math.max(0, toInt(editingProduct.stockml));
-
-      const newProd = { name, sku, price, categoria, stockb2b: sB2B, stockweb: sWeb, stockml: sML };
-
-      // 1) Inserta en tu BD
-      const { error } = await supabase.from('productos').insert(newProd);
-      if (error) {
-        console.error('Error al crear producto:', error);
-        return toastAndLog(error.message || 'Error al crear producto.', 'error');
-      }
-
-      // 2) Crea/asegura en Woo + mapea wc_links + setea stock inicial
-      try {
-        const resWoo = await wooCreateProductLocal({
-          skuLocal: sku,          // SKU local
-          name,                   // nombre
-          price,                  // precio
-          initialStockWeb: sWeb,  // stock web inicial
-          // skuWoo: "SKU-DISTINTO-EN-WOO" // opcional si Woo usa otro SKU
-        });
-
-        // 3) Consistencia: empuja 1 vez el stock Web a Woo
-        await wooPushStockLocal(sku, sWeb);
-
-        toastAndLog(`Producto creado y sincronizado con Woo: ${name} (SKU Woo ${resWoo.skuWoo})`, 'sync');
-      } catch (e) {
-        console.error("Crear/Sync en Woo falló:", e);
-        toastAndLog("Producto creado en BD. No se pudo crear/actualizar en Woo.", "error");
-      }
-
-      const total = sB2B + sWeb + sML;
-      toastAndLog(
-        `Producto creado: ${newProd.name} (SKU ${newProd.sku}) • B2B ${sB2B} | Web ${sWeb} | ML ${sML} • Total ${total}`,
-        'sync'
-      );
+    } catch (err) {
+      console.error('Error en saveProduct:', err);
+      toastAndLog('Error en la operación.', 'error');
+    } finally {
+      setShowModal(false);
+      setEditingProduct(null);
+      setIsExistingSKU(false);
+      fetchProducts({ silent: true });
     }
-  } catch (err) {
-    console.error('Error en saveProduct:', err);
-    toastAndLog('Error en la operación.', 'error');
-  } finally {
-    setShowModal(false);
-    setEditingProduct(null);
-    setIsExistingSKU(false);
-    fetchProducts({ silent: true });
-  }
-};
-
-
-  // ---------- Abrir modales ----------
-  const openAddModal = () => {
-    setEditingProduct({ sku: '', name: '', price: '', categoria: '', stockb2b: '', stockweb: '', stockml: '' });
-    setIsExistingSKU(false);
-    setShowModal(true);
   };
-  const openEditModal = (p: Product) => {
-    setEditingProduct({
-      ...p,
-      _originalstockb2b: Number(p.stockb2b || 0),
-      _originalstockweb: Number(p.stockweb || 0),
-      _originalstockml:  Number(p.stockml  || 0),
-      // deltas como string
-      stockb2b: '',
-      stockweb: '',
-      stockml:  '',
+
+  // helpers UI modal
+  const selectedCatName = useMemo(() => {
+    const id = Number(editingProduct?.categoria_id || 0);
+    return cats.find(c => c.id === id)?.name || '';
+  }, [editingProduct?.categoria_id, cats]);
+
+  const tallaOptions = useMemo(() => {
+    const esPantalon = selectedCatName.toLowerCase() === 'pantalones';
+    return tallas
+      .filter(t => esPantalon ? t.tipo === 'numerica' : t.tipo === 'alfanumerica')
+      .sort((a,b) => {
+        // num: por valor_numerico; alfa: XS,S,M...
+        if (a.tipo === 'numerica' && b.tipo === 'numerica') {
+          return (a.orden ?? 0) - (b.orden ?? 0);
+        }
+        const order = ['XS','S','M','L','XL','XXL','3XL'];
+        return order.indexOf(a.etiqueta) - order.indexOf(b.etiqueta);
+      });
+  }, [tallas, selectedCatName]);
+
+  // cuando cambian FKs, autoconstruir SKU si el usuario no lo tocó manualmente
+  useEffect(() => {
+    if (!showModal) return;
+    setEditingProduct((prev: any) => {
+      if (!prev) return prev;
+      const autoSku = buildSku(prev?.categoria_id, prev?.variante_id, prev?.color_id, prev?.talla_id);
+      // si el sku está vacío o ya tenía el patrón, lo actualizamos
+      if (!prev.sku || /^SKU-\d{8}$/.test(prev.sku)) {
+        return { ...prev, sku: autoSku };
+      }
+      return prev;
     });
-    setIsExistingSKU(true);
-    setShowModal(true);
-  };
+  }, [showModal, editingProduct?.categoria_id, editingProduct?.variante_id, editingProduct?.color_id, editingProduct?.talla_id]);
 
-  // ---------- Paginación helpers ----------
+  // paginación
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
   const showingFrom = totalRows === 0 ? 0 : (page - 1) * pageSize + 1;
   const showingTo = Math.min(totalRows, page * pageSize);
-
   const goFirst = () => setPage(1);
   const goPrev = () => setPage((p) => Math.max(1, p - 1));
   const goNext = () => setPage((p) => Math.min(totalPages, p + 1));
@@ -473,16 +525,31 @@ export const StockManager = () => {
           />
           <select
             value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
+            onChange={(e) => setCategoryFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
             className="border rounded px-3 py-2"
           >
             <option value="all">Todas las categorías</option>
-            {CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
+            {cats.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
 
-          <button onClick={openAddModal} className="bg-green-600 text-white px-4 py-2 rounded flex items-center gap-2">
+          <button onClick={() => {
+            setEditingProduct({
+              sku: '',
+              name: '',
+              price: '',
+              categoria_id: '',
+              variante_id: '',
+              color_id: '',
+              talla_id: '',
+              stockb2b: '',
+              stockweb: '',
+              stockml: ''
+            });
+            setIsExistingSKU(false);
+            setShowModal(true);
+          }} className="bg-green-600 text-white px-4 py-2 rounded flex items-center gap-2">
             <Plus size={16} /> Agregar
           </button>
         </div>
@@ -513,7 +580,10 @@ export const StockManager = () => {
               {[
                 { label: 'Nombre', key: 'name' as SortField, align: 'text-left' },
                 { label: 'SKU', key: 'sku' as SortField, align: 'text-left' },
-                { label: 'Categoría', key: 'categoria' as SortField, align: 'text-center' },
+                { label: 'Categoría', key: 'categoria_nombre' as SortField, align: 'text-center' },
+                { label: 'Variante', key: 'variante_nombre' as SortField, align: 'text-center' },
+                { label: 'Color', key: 'color_nombre' as SortField, align: 'text-center' },
+                { label: 'Talla', key: 'talla_etiqueta' as SortField, align: 'text-center' },
                 { label: 'Precio', key: 'price' as SortField, align: 'text-center' },
                 { label: 'B2B', key: 'stockb2b' as SortField, align: 'text-center' },
                 { label: 'Web', key: 'stockweb' as SortField, align: 'text-center' },
@@ -546,7 +616,10 @@ export const StockManager = () => {
 
                 <td className="py-3 px-4">{p.name}</td>
                 <td className="py-3 px-4"><code className="bg-neutral-100 px-2 py-1 rounded">{p.sku}</code></td>
-                <td className="py-3 px-4 text-center">{p.categoria}</td>
+                <td className="py-3 px-4 text-center">{p.categoria_nombre || '—'}</td>
+                <td className="py-3 px-4 text-center">{p.variante_nombre || '—'}</td>
+                <td className="py-3 px-4 text-center">{p.talla_etiqueta || '—'}</td>
+                <td className="py-3 px-4 text-center">{p.color_nombre || '—'}</td>
                 <td className="py-3 px-4 text-center">{formatPrice(Number(p.price))}</td>
 
                 <td className="py-3 px-4 text-center">
@@ -568,7 +641,19 @@ export const StockManager = () => {
                 <td className="py-3 px-4 text-center font-semibold">{stockTotal(p)}</td>
 
                 <td className="py-3 px-4 text-center">
-                  <button onClick={() => openEditModal(p)} className="text-blue-600 hover:text-blue-800">
+                  <button onClick={() => {
+                    setEditingProduct({
+                      ...p,
+                      _originalstockb2b: Number(p.stockb2b || 0),
+                      _originalstockweb: Number(p.stockweb || 0),
+                      _originalstockml:  Number(p.stockml  || 0),
+                      stockb2b: '',
+                      stockweb: '',
+                      stockml:  '',
+                    });
+                    setIsExistingSKU(true);
+                    setShowModal(true);
+                  }} className="text-blue-600 hover:text-blue-800">
                     <Pencil size={16} />
                   </button>
                 </td>
@@ -577,7 +662,7 @@ export const StockManager = () => {
 
             {products.length === 0 && (
               <tr>
-                <td colSpan={10} className="text-center py-8 text-neutral-500">No se encontraron productos</td>
+                <td colSpan={12} className="text-center py-8 text-neutral-500">No se encontraron productos</td>
               </tr>
             )}
           </tbody>
@@ -649,22 +734,18 @@ export const StockManager = () => {
                 onBlur={handleSKUBlur}
                 className="w-full border rounded px-3 py-2"
               />
+              {!isExistingSKU && (
+                <p className="text-[11px] text-neutral-500 mt-1">
+                  Se autogenera con tus selecciones como <code>SKU-XXYYZZTT</code>.
+                </p>
+              )}
             </div>
 
             {isExistingSKU ? (
               <>
-                {/* Datos solo lectura */}
-                <div className="mb-2 text-sm text-neutral-600">
-                  <strong>Nombre:</strong> {editingProduct?.name}
-                </div>
-                <div className="mb-2 text-sm text-neutral-600">
-                  <strong>Precio:</strong> {formatPrice(Number(editingProduct?.price || 0))}
-                </div>
-                <div className="mb-2 text-sm text-neutral-600">
-                  <strong>Categoría:</strong> {editingProduct?.categoria || '—'}
-                </div>
+                <div className="mb-2 text-sm text-neutral-600"><strong>Nombre:</strong> {editingProduct?.name}</div>
+                <div className="mb-2 text-sm text-neutral-600"><strong>Precio:</strong> {formatPrice(Number(editingProduct?.price || 0))}</div>
 
-                {/* Deltas con "-" permitido */}
                 <div className="grid grid-cols-3 gap-3 mt-3">
                   {/* B2B */}
                   <div>
@@ -695,10 +776,7 @@ export const StockManager = () => {
                       onChange={(e) => setEditingProduct({ ...editingProduct, stockb2b: e.target.value })}
                       className="w-full border rounded px-2 py-2"
                       placeholder="Ej: -2 o 5"
-                      aria-label="Cantidad a sumar al stock B2B"
-                      title="Cantidad a sumar al stock B2B (puede ser negativa para restar)"
                     />
-                    <p className="mt-1 text-[11px] text-neutral-500">Usa valores positivos para sumar y negativos para restar.</p>
                   </div>
 
                   {/* Web */}
@@ -730,10 +808,7 @@ export const StockManager = () => {
                       onChange={(e) => setEditingProduct({ ...editingProduct, stockweb: e.target.value })}
                       className="w-full border rounded px-2 py-2"
                       placeholder="Ej: -1 o 3"
-                      aria-label="Cantidad a sumar al stock Web"
-                      title="Cantidad a sumar al stock Web (puede ser negativa para restar)"
                     />
-                    <p className="mt-1 text-[11px] text-neutral-500">Suma o resta stock publicado en tu sitio.</p>
                   </div>
 
                   {/* ML */}
@@ -765,10 +840,7 @@ export const StockManager = () => {
                       onChange={(e) => setEditingProduct({ ...editingProduct, stockml: e.target.value })}
                       className="w-full border rounded px-2 py-2"
                       placeholder="Ej: -3 o 2"
-                      aria-label="Cantidad a sumar al stock ML"
-                      title="Cantidad a sumar al stock ML (puede ser negativa para restar)"
                     />
-                    <p className="mt-1 text-[11px] text-neutral-500">Stock en Mercado Libre.</p>
                   </div>
                 </div>
               </>
@@ -808,22 +880,65 @@ export const StockManager = () => {
                   />
                 </div>
 
-                <div className="mb-3">
-                  <label className="block text-sm text-neutral-600 mb-1">Categoría</label>
-                  <select
-                    value={editingProduct?.categoria ?? ''}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, categoria: e.target.value })}
-                    className="w-full border rounded px-3 py-2"
-                  >
-                    <option value="">Seleccionar categoría</option>
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
+                {/* Dropdowns normalizados */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm text-neutral-600 mb-1">Categoría</label>
+                    <select
+                      value={editingProduct?.categoria_id ?? ''}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, categoria_id: e.target.value ? Number(e.target.value) : '' })}
+                      className="w-full border rounded px-3 py-2"
+                    >
+                      <option value="">Seleccionar categoría</option>
+                      {cats.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-neutral-600 mb-1">Variante</label>
+                    <select
+                      value={editingProduct?.variante_id ?? ''}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, variante_id: e.target.value ? Number(e.target.value) : '' })}
+                      className="w-full border rounded px-3 py-2"
+                    >
+                      <option value="">Seleccionar variante</option>
+                      {vars.map((v) => (<option key={v.id} value={v.id}>{v.name}</option>))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-neutral-600 mb-1">Color</label>
+                    <select
+                      value={editingProduct?.color_id ?? ''}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, color_id: e.target.value ? Number(e.target.value) : '' })}
+                      className="w-full border rounded px-3 py-2"
+                    >
+                      <option value="">Seleccionar color</option>
+                      {cols.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-neutral-600 mb-1">Talla</label>
+                    <select
+                      value={editingProduct?.talla_id ?? ''}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, talla_id: e.target.value ? Number(e.target.value) : '' })}
+                      className="w-full border rounded px-3 py-2"
+                      disabled={!editingProduct?.categoria_id}
+                    >
+                      <option value="">{editingProduct?.categoria_id ? 'Seleccionar talla' : 'Selecciona categoría primero'}</option>
+                      {tallaOptions.map(t => (<option key={t.id} value={t.id}>{t.etiqueta}</option>))}
+                    </select>
+                    <p className="text-[11px] text-neutral-500 mt-1">
+                      {selectedCatName.toLowerCase() === 'pantalones'
+                        ? 'Mostrando tallas numéricas'
+                        : 'Mostrando tallas alfanuméricas'}
+                    </p>
+                  </div>
                 </div>
 
-                {/* Stocks iniciales no-negativos */}
-                <div className="grid grid-cols-3 gap-3">
+                {/* Stocks iniciales */}
+                <div className="grid grid-cols-3 gap-3 mt-3">
                   <div>
                     <label className="block text-xs font-semibold text-neutral-700 mb-1">
                       Stock inicial <span className="px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 text-[10px]">B2B</span>
@@ -847,8 +962,6 @@ export const StockManager = () => {
                       onChange={(e) => setEditingProduct({ ...editingProduct, stockb2b: e.target.value })}
                       className="w-full border rounded px-2 py-2"
                       placeholder="0"
-                      aria-label="Stock inicial B2B"
-                      title="Stock inicial para canal B2B"
                     />
                   </div>
 
@@ -875,8 +988,6 @@ export const StockManager = () => {
                       onChange={(e) => setEditingProduct({ ...editingProduct, stockweb: e.target.value })}
                       className="w-full border rounded px-2 py-2"
                       placeholder="0"
-                      aria-label="Stock inicial Web"
-                      title="Stock inicial para canal Web"
                     />
                   </div>
 
@@ -903,8 +1014,6 @@ export const StockManager = () => {
                       onChange={(e) => setEditingProduct({ ...editingProduct, stockml: e.target.value })}
                       className="w-full border rounded px-2 py-2"
                       placeholder="0"
-                      aria-label="Stock inicial ML"
-                      title="Stock inicial para canal Mercado Libre"
                     />
                   </div>
                 </div>
