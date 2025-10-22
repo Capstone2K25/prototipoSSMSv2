@@ -98,10 +98,11 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   };
 
   const fetchProducts = async () => {
+  // Solo traer productos con stockml > 0
   const { data, error } = await supabase
     .from('productos')
     .select('id, name, sku, categoria, price, stockb2b, stockweb, stockml')
-    .gt('stockml', 0)               // ⬅️ solo > 0
+    .gt('stockml', 0) // 👈 FILTRA AQUÍ
     .order('id', { ascending: true });
 
   if (error) {
@@ -119,9 +120,11 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     stockb2b: Number(p.stockb2b) || 0,
     stockweb: Number(p.stockweb) || 0,
     stockml: Number(p.stockml) || 0,
-  }));
+  })) as Product[];
+
   setProducts(rows);
 };
+
 
 
   const fetchMlLinks = async () => {
