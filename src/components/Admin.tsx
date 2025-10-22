@@ -616,10 +616,8 @@ const { error: upErr } = await supabase.from('ml_credentials').upsert(up, { onCo
                 </button>
 
                 <button
-                  onClick={disconnectMl}
-                  disabled={!mlCreds}
-                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
-                  title="Eliminar credenciales guardadas"
+                    onClick={disconnectMl}
+                    disabled={!health?.connected || mlLoading || saving}
                 >
                   <Unplug size={16} />
                   Desconectar
