@@ -404,17 +404,20 @@ export const StockManager = () => {
         );
       } else {
         // CREAR
-        const name = (editingProduct.name || '').toString().trim();
-        const price = toInt(editingProduct.price);
-        const categoria_id = Number(editingProduct.categoria_id || 0) || null;
-        const variante_id  = Number(editingProduct.variante_id  || 0) || null;
-        const color_id     = Number(editingProduct.color_id     || 0) || null;
-        const talla_id     = Number(editingProduct.talla_id     || 0) || null;
-        const sku = editingProduct.sku.toString().trim();
+          const name = (editingProduct.name || '').toString().trim();
+          const price = toInt(editingProduct.price);
+          const categoria_id = Number(editingProduct.categoria_id || 0) || null;
+          const variante_id  = Number(editingProduct.variante_id  || 0) || null;
+          const color_id     = Number(editingProduct.color_id     || 0) || null;
+          const talla_id     = Number(editingProduct.talla_id     || 0) || null;
 
-        if (!name || !sku || !price || !categoria_id || !variante_id || !color_id || !talla_id) {
-          return toast.error('Completa nombre, precio, categoría, variante, color y talla.');
-        }
+          // SKU SIEMPRE desde las opciones, no desde el input:
+          const sku = buildSku(categoria_id, variante_id, color_id, talla_id);
+
+          if (!name || !price || !categoria_id || !variante_id || !color_id || !talla_id) {
+            return toast.error('Completa nombre, precio, categoría, variante, color y talla.');
+          }
+
 
         const sB2B = Math.max(0, toInt(editingProduct.stockb2b));
         const sWeb = Math.max(0, toInt(editingProduct.stockweb));
@@ -481,17 +484,27 @@ export const StockManager = () => {
 
   // cuando cambian FKs, autoconstruir SKU si el usuario no lo tocó manualmente
   useEffect(() => {
-    if (!showModal) return;
-    setEditingProduct((prev: any) => {
-      if (!prev) return prev;
-      const autoSku = buildSku(prev?.categoria_id, prev?.variante_id, prev?.color_id, prev?.talla_id);
-      // si el sku está vacío o ya tenía el patrón, lo actualizamos
-      if (!prev.sku || /^SKU-\d{8}$/.test(prev.sku)) {
-        return { ...prev, sku: autoSku };
-      }
-      return prev;
-    });
-  }, [showModal, editingProduct?.categoria_id, editingProduct?.variante_id, editingProduct?.color_id, editingProduct?.talla_id]);
+  if (!showModal || !editingProduct) return;
+
+  // SKU solo auto para "agregar" (isExistingSKU === false)
+  if (!isExistingSKU) {
+    const autoSku = buildSku(
+      Number(editingProduct?.categoria_id || 0),
+      Number(editingProduct?.variante_id  || 0),
+      Number(editingProduct?.color_id     || 0),
+      Number(editingProduct?.talla_id     || 0),
+    );
+    setEditingProduct((prev: any) => ({ ...prev, sku: autoSku }));
+  }
+}, [
+  showModal,
+  isExistingSKU,
+  editingProduct?.categoria_id,
+  editingProduct?.variante_id,
+  editingProduct?.color_id,
+  editingProduct?.talla_id,
+]);
+
 
   // paginación
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
@@ -581,9 +594,9 @@ export const StockManager = () => {
                 { label: 'Nombre', key: 'name' as SortField, align: 'text-left' },
                 { label: 'SKU', key: 'sku' as SortField, align: 'text-left' },
                 { label: 'Categoría', key: 'categoria_nombre' as SortField, align: 'text-center' },
-                { label: 'Variante', key: 'variante_nombre' as SortField, align: 'text-center' },
-                { label: 'Color', key: 'color_nombre' as SortField, align: 'text-center' },
+                { label: 'Variante', key: 'variante_nombre' as SortField, align: 'text-center' },       
                 { label: 'Talla', key: 'talla_etiqueta' as SortField, align: 'text-center' },
+                { label: 'Color', key: 'color_nombre' as SortField, align: 'text-center' },
                 { label: 'Precio', key: 'price' as SortField, align: 'text-center' },
                 { label: 'B2B', key: 'stockb2b' as SortField, align: 'text-center' },
                 { label: 'Web', key: 'stockweb' as SortField, align: 'text-center' },
@@ -725,21 +738,37 @@ export const StockManager = () => {
             </h3>
 
             {/* SKU */}
-            <div className="mb-3">
-              <label className="block text-sm text-neutral-600 mb-1">SKU (obligatorio)</label>
-              <input
-                type="text"
-                value={editingProduct?.sku || ''}
-                onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value })}
-                onBlur={handleSKUBlur}
-                className="w-full border rounded px-3 py-2"
-              />
-              {!isExistingSKU && (
-                <p className="text-[11px] text-neutral-500 mt-1">
-                  Se autogenera con tus selecciones como <code>SKU-XXYYZZTT</code>.
-                </p>
-              )}
-            </div>
+<div className="mb-3">
+  <label className="block text-sm text-neutral-600 mb-1">SKU</label>
+
+  {/* Agregar: SKU bloqueado y auto-generado */}
+  {!isExistingSKU && (
+    <input
+      type="text"
+      value={editingProduct?.sku || ''}
+      readOnly
+      className="w-full border rounded px-3 py-2 bg-neutral-100 text-neutral-700"
+      title="El SKU se genera automáticamente según Categoría, Variante, Color y Talla"
+    />
+  )}
+
+  {/* Editar: SKU solo lectura */}
+  {isExistingSKU && (
+    <input
+      type="text"
+      value={editingProduct?.sku || ''}
+      readOnly
+      className="w-full border rounded px-3 py-2 bg-neutral-100 text-neutral-700"
+    />
+  )}
+
+  {!isExistingSKU && (
+    <p className="text-[11px] text-neutral-500 mt-1">
+      Se genera como <code>SKU-XXYYZZTT</code> según tus selecciones.
+    </p>
+  )}
+</div>
+
 
             {isExistingSKU ? (
               <>
