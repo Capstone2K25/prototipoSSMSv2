@@ -212,18 +212,35 @@ export const StockManager = () => {
   };
 
   // carga inicial
-  useEffect(() => {
-    (async () => {
-      await loadLookups();
-      await fetchProducts();
-    })();
-    const interval = setInterval(() => fetchProducts({ silent: true, keepSelection: true }), 100000);
-    return () => {
-      clearInterval(interval);
-      abortRef.current?.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // carga inicial separada (primero lookups, luego productos)
+useEffect(() => { loadLookups(); }, []);
+
+useEffect(() => {
+  if (cats.length && vars.length && cols.length && tallas.length) {
+    fetchProducts();
+  }
+  const interval = setInterval(() => fetchProducts({ silent: true, keepSelection: true }), 100000);
+  return () => {
+    clearInterval(interval);
+    abortRef.current?.abort();
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [cats.length, vars.length, cols.length, tallas.length]);
+
+// refresca los nombres de categoría/variante/color/talla cuando llegan los lookups
+useEffect(() => {
+  if (products.length === 0) return;
+  setProducts(prev =>
+    prev.map(p => ({
+      ...p,
+      categoria_nombre: p.categoria_id ? catById[p.categoria_id] : '',
+      variante_nombre:  p.variante_id  ? varById[p.variante_id]   : '',
+      color_nombre:     p.color_id     ? colById[p.color_id]      : '',
+      talla_etiqueta:   p.talla_id     ? talById[p.talla_id]      : '',
+    }))
+  );
+}, [catById, varById, colById, talById]);
+
 
   // refetch en cambios
   useEffect(() => { setPage(1); }, [categoryFilter, debouncedSearch, pageSize]);
