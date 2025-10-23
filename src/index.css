@@ -23,7 +23,7 @@
   inset: -12%;                      /* sangrado para cubrir cuando rotamos */
   transform: rotate(-30deg) scale(1.05);  /* DIAGONAL real del patrón */
   transform-origin: center;
-
+ 
   /* dos capas del mismo logo; la segunda se corre media celda */
   background-image: url("/img/oldtree-logo.png"), url("/img/oldtree-logo.png");
   /* "space" añade separación entre repeticiones sin deformar el logo */
