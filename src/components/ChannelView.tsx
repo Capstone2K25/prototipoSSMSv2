@@ -65,6 +65,12 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   const [mlLinks, setMlLinks] = useState<Record<string, MLLink[]>>({});
   const [health, setHealth] = useState<Health | null>(null);
 
+  const [catQuery, setCatQuery] = useState("");
+  const [catOpts, setCatOpts] = useState<Array<{category_id:string; category_name:string; domain_name:string}>>([]);
+  const [catLoading, setCatLoading] = useState(false);
+  const [draftCatName, setDraftCatName] = useState<string>("");
+
+
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
@@ -178,6 +184,26 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
       setSyncing(false);
     }
   }
+// Debounce: espera 300 ms tras teclear
+  useEffect(() => {
+    const q = catQuery.trim();
+    if (!showPreview) return;
+    if (!q) {
+      setCatOpts([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        setCatLoading(true);
+        const { data, error } = await supabase.functions.invoke('meli-categories', { body: { q } });
+        if (!error && data?.ok) setCatOpts(data.results || []);
+        else setCatOpts([]);
+      } finally {
+        setCatLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [catQuery, showPreview]);
 
   useEffect(() => {
     (async () => {
@@ -222,8 +248,12 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
       buying_mode: 'buy_it_now',
     };
     setDraft(d);
+    setDraftCatName(""); // nombre visible (lo llenará el buscador si el usuario cambia)
     setDraftError(null);
     setShowPreview(true);
+    setCatQuery(""); 
+    setCatOpts([]);
+
   }
 
   async function confirmPublish() {
@@ -234,9 +264,10 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
 
     // forzar categoría válida MLC*
     const safeDraft: DraftPublish = {
-      ...draft,
-      category_id: draft.category_id.startsWith('ML') ? draft.category_id : 'MLC3530',
-    };
+  ...draft,
+  category_id: draft.category_id.startsWith('ML') ? draft.category_id : 'MLC3530',
+};
+
 
     try {
       setDraftSending(true);
@@ -504,14 +535,45 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                 </div>
 
                 {/* Categoría bloqueada para evitar conflictos */}
-                <label className="text-sm text-neutral-600">
-                  Categoría (valor asignado para Mercado Libre)
-                </label>
-                <input
-                  className="w-full border rounded-xl p-3 bg-neutral-100 text-neutral-700"
-                  value={draft.category_id}
-                  readOnly
-                />
+               <label className="text-sm text-neutral-600">Categoría</label>
+                <div className="relative">
+                  <input
+                    className="w-full border rounded-xl p-3 pr-24"
+                    placeholder="Buscar categoría de Mercado Libre..."
+                    value={catQuery}
+                    onChange={(e) => setCatQuery(e.target.value)}
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-neutral-500">
+                    {catLoading ? "Buscando..." : "MLC"}
+                  </span>
+
+                  {/* Dropdown de sugerencias */}
+                  {catOpts.length > 0 && (
+                    <div className="absolute z-10 mt-1 w-full bg-white border rounded-lg max-h-56 overflow-auto shadow">
+                      {catOpts.map(opt => (
+                        <button
+                          type="button"
+                          key={opt.category_id + opt.domain_name}
+                          onClick={() => {
+                            // fija categoría válida de ML
+                            setDraft(d => d ? { ...d, category_id: opt.category_id } : d);
+                            setDraftCatName(`${opt.category_name}`);
+                            setCatQuery(`${opt.category_name}`);
+                            setCatOpts([]);
+                          }}
+                          className="w-full text-left px-3 py-2 hover:bg-neutral-50"
+                        >
+                          <div className="text-sm font-medium">{opt.category_name}</div>
+                          <div className="text-xs text-neutral-500">{opt.domain_name} · {opt.category_id}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-neutral-500 mt-1">
+                  {draft?.category_id || '—'} · valor asignado para Mercado Libre
+                </p>
+
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
