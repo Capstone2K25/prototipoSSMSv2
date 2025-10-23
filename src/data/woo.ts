@@ -85,3 +85,17 @@ export function wooCreateProductLocal(args: {
 export function wooDeleteProductLocal(sku_local: string) {
   return call("/delete-product-local", { method: "POST", json: { sku_local } });
 }
+
+// NUEVO
+export function wooUpdateProductLocal(args: {
+  skuLocal: string;
+  name?: string;
+  price?: number;
+  absoluteStockWeb?: number;
+}) {
+  const { skuLocal, name, price, absoluteStockWeb } = args;
+  return call("/update-product-local", {
+    method: "POST",
+    json: { sku_local: skuLocal, name, price, absoluteStockWeb },
+  });
+}
