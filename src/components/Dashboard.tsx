@@ -33,7 +33,10 @@ type Product = {
   stockb2b: number;
   stockweb: number;
   stockml: number;
+  talla_id: number | null;           // ⬅️ nuevo
+  talla_etiqueta: string | null;     // ⬅️ nuevo
 };
+
 
 type Category = { id_categoria: number; nombre_categoria: string };
 type Channel = 'all' | 'B2B' | 'Web' | 'ML';
@@ -72,21 +75,34 @@ export const Dashboard = () => {
   const fetchProducts = async () => {
     setLoading(true);
 
-    const [{ data: prodData, error: prodErr }, { data: catData, error: catErr }] = await Promise.all([
-      supabase
-        .from('productos')
-        .select('id, name, sku, categoria_id, stockb2b, stockweb, stockml'),
-      supabase
-        .from('categorias')
-        .select('id_categoria, nombre_categoria')
-        .order('nombre_categoria', { ascending: true }),
-    ]);
+    const [{ data: prodData, error: prodErr }] = await Promise.all([
+  supabase
+    .from('productos')
+    .select(`
+      id, name, sku, categoria_id, stockb2b, stockweb, stockml, talla_id,
+      tallas:talla_id ( id_talla, etiqueta )
+    `),
+  supabase
+    .from('categorias')
+    .select('id_categoria, nombre_categoria')
+    .order('nombre_categoria', { ascending: true }),
+]);
 
-    if (!prodErr && prodData) setProducts(prodData as Product[]);
-    else console.error('Error al cargar productos:', prodErr);
-
-    if (!catErr && catData) setCategories(catData as Category[]);
-    else console.error('Error al cargar categorías:', catErr);
+if (!prodErr && prodData) {
+  setProducts((prodData as any[]).map(p => ({
+    id: p.id,
+    name: p.name,
+    sku: p.sku,
+    categoria_id: p.categoria_id,
+    stockb2b: p.stockb2b,
+    stockweb: p.stockweb,
+    stockml: p.stockml,
+    talla_id: p.talla_id ?? null,
+    talla_etiqueta: p.tallas?.etiqueta ?? null,   // ⬅️ aquí viene la etiqueta de talla
+  })));
+} else {
+  console.error('Error al cargar productos:', prodErr);
+}
 
     setLoading(false);
   };
@@ -135,11 +151,12 @@ export const Dashboard = () => {
 
   // Alertas de stock bajo agrupadas por producto
   type LowGroup = {
-    id: number;
-    name: string;
-    sku: string;
-    low: { channel: 'B2B' | 'Web' | 'ML'; value: number }[];
-  };
+  id: number;
+  name: string;
+  sku: string;
+  talla?: string | null;   // ⬅️ nuevo
+  low: { channel: 'B2B' | 'Web' | 'ML'; value: number }[];
+};
 
   const lowByChannelAll: LowGroup[] = useMemo(() => {
     const channelRank = { B2B: 0, Web: 1, ML: 2 } as const;
@@ -158,7 +175,14 @@ export const Dashboard = () => {
       if (low.length > 0) {
         // Ordena chips dentro de la fila: B2B → Web → ML
         low.sort((a, b) => channelRank[a.channel] - channelRank[b.channel]);
-        out.push({ id: p.id, name: p.name, sku: p.sku, low });
+        out.push({
+  id: p.id,
+  name: p.name,
+  sku: p.sku,
+  talla: p.talla_etiqueta,     // ⬅️ nuevo
+  low
+});
+
       }
     }
 
@@ -370,7 +394,10 @@ export const Dashboard = () => {
                     {index + 1}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-neutral-900 truncate">{product.name}</p>
+                   <p className="font-semibold text-neutral-900 truncate">
+  {product.name}{product.talla_etiqueta ? ` · ${product.talla_etiqueta}` : ''}
+</p>
+
                     <p className="text-sm text-neutral-500">{product.sku}</p>
                   </div>
                   <div className="text-right">
@@ -410,118 +437,82 @@ export const Dashboard = () => {
           </div>
 
           {/* Lista/Paginación de alertas */}
-          {(() => {
-            // Construcción de lowByChannelFiltered y paginación
-            const channelRank = { B2B: 0, Web: 1, ML: 2 } as const;
-            const base: LowGroup[] = filtered.reduce((acc: LowGroup[], p) => {
-              const low: LowGroup['low'] = [];
-              const b2b = p.stockb2b || 0;
-              const web = p.stockweb || 0;
-              const ml  = p.stockml  || 0;
-              if (b2b < THRESHOLD) low.push({ channel: 'B2B', value: b2b });
-              if (web < THRESHOLD) low.push({ channel: 'Web', value: web });
-              if (ml  < THRESHOLD) low.push({ channel: 'ML',  value: ml  });
-              if (low.length > 0) {
-                low.sort((a, b) => channelRank[a.channel] - channelRank[b.channel]);
-                acc.push({ id: p.id, name: p.name, sku: p.sku, low });
-              }
-              return acc;
-            }, []).sort((a, b) => {
-              const minA = Math.min(...a.low.map(x => x.value));
-              const minB = Math.min(...b.low.map(x => x.value));
-              if (minA !== minB) return minA - minB;
-              return a.name.localeCompare(b.name);
-            });
+{alertsPageData.length === 0 ? (
+  <p className="text-sm text-neutral-500">No hay alertas con el filtro actual 🎉</p>
+) : (
+  <>
+    <div className="space-y-3">
+      {alertsPageData.map(entry => (
+        <div key={entry.id} className="flex items-center justify-between border-b pb-3 last:border-0">
+          <div className="min-w-0">
+            <p className="font-semibold text-neutral-900 truncate">
+              {entry.name}{entry.talla ? ` · ${entry.talla}` : ''}
+            </p>
+            <p className="text-xs text-neutral-500">{entry.sku}</p>
+            {entry.low.length > 0 && (
+              <p className="text-[11px] text-neutral-500 mt-1">
+                {/* opcional: nombre de categoría */}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2 justify-end">
+            {entry.low.map(l => (
+              <div key={l.channel} className="flex items-center gap-2">
+                <span className={`px-2 py-1 rounded text-xs font-semibold
+                  ${l.channel === 'B2B' ? 'bg-fuchsia-100 text-fuchsia-700'
+                    : l.channel === 'Web' ? 'bg-blue-100 text-blue-700'
+                    : 'bg-amber-100 text-amber-700'}`}>
+                  {l.channel}
+                </span>
+                <span className={`text-sm font-bold ${l.value < 5 ? 'text-red-600' : 'text-orange-600'}`}>
+                  {l.value}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
 
-            const filteredByChannel = channelFilter === 'all'
-              ? base
-              : base.map(g => ({ ...g, low: g.low.filter(l => l.channel === channelFilter) }))
-                    .filter(g => g.low.length > 0);
+    {/* Paginación de alertas */}
+    <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="text-sm text-neutral-600">
+        Mostrando <strong>{alertFrom}</strong>–<strong>{alertTo}</strong> de <strong>{alertTotal}</strong> alertas
+      </div>
 
-            const alertTotal = filteredByChannel.length;
-            const alertTotalPages = Math.max(1, Math.ceil(alertTotal / alertPageSize));
-            const alertFrom = alertTotal === 0 ? 0 : (alertPage - 1) * alertPageSize + 1;
-            const alertTo = Math.min(alertTotal, alertPage * alertPageSize);
-            const pageData = filteredByChannel.slice((alertPage - 1) * alertPageSize, (alertPage - 1) * alertPageSize + alertPageSize);
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-neutral-600">Por página:</span>
+        <select
+          value={alertPageSize}
+          onChange={(e) => { setAlertPageSize(Number(e.target.value)); setAlertPage(1); }}
+          className="border rounded px-2 py-1 text-sm"
+        >
+          {[5, 10, 20, 30].map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
 
-            return (
-              <>
-                {pageData.length === 0 ? (
-                  <p className="text-sm text-neutral-500">No hay alertas con el filtro actual 🎉</p>
-                ) : (
-                  <>
-                    <div className="space-y-3">
-                      {pageData.map(entry => (
-                        <div key={entry.id} className="flex items-center justify-between border-b pb-3 last:border-0">
-                          <div className="min-w-0">
-                            <p className="font-semibold text-neutral-900 truncate">{entry.name}</p>
-                            <p className="text-xs text-neutral-500">{entry.sku}</p>
-                            {entry.low.length > 0 && entry.low[0] && typeof entry.low[0] === 'object' && (
-                              <p className="text-[11px] text-neutral-500 mt-1">
-                                {catNameById[products.find(p => p.id === entry.id)?.categoria_id || 0] || ''}
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex flex-wrap gap-2 justify-end">
-                            {entry.low.map(l => (
-                              <div key={l.channel} className="flex items-center gap-2">
-                                <span className={`px-2 py-1 rounded text-xs font-semibold
-                                  ${l.channel === 'B2B' ? 'bg-fuchsia-100 text-fuchsia-700'
-                                    : l.channel === 'Web' ? 'bg-blue-100 text-blue-700'
-                                    : 'bg-amber-100 text-amber-700'}`}>
-                                  {l.channel}
-                                </span>
-                                <span className={`text-sm font-bold ${l.value < 5 ? 'text-red-600' : 'text-orange-600'}`}>
-                                  {l.value}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+        <div className="flex items-center gap-1 ml-2">
+          <button className="border rounded p-1 disabled:opacity-50" onClick={goFirst} disabled={alertPage === 1}>
+            <ChevronsLeft size={16} />
+          </button>
+          <button className="border rounded p-1 disabled:opacity-50" onClick={goPrev} disabled={alertPage === 1}>
+            <ChevronLeft size={16} />
+          </button>
+          <span className="mx-2 text-sm">
+            Página <strong>{alertPage}</strong> de <strong>{alertTotalPages}</strong>
+          </span>
+          <button className="border rounded p-1 disabled:opacity-50" onClick={goNext} disabled={alertPage === alertTotalPages}>
+            <ChevronRight size={16} />
+          </button>
+          <button className="border rounded p-1 disabled:opacity-50" onClick={goLast} disabled={alertPage === alertTotalPages}>
+            <ChevronsRight size={16} />
+          </button>
+        </div>
+      </div>
+    </div>
+  </>
+)}
 
-                    {/* Paginación de alertas */}
-                    <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                      <div className="text-sm text-neutral-600">
-                        Mostrando <strong>{alertFrom}</strong>–<strong>{alertTo}</strong> de <strong>{alertTotal}</strong> alertas
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-neutral-600">Por página:</span>
-                        <select
-                          value={alertPageSize}
-                          onChange={(e) => { setAlertPageSize(Number(e.target.value)); setAlertPage(1); }}
-                          className="border rounded px-2 py-1 text-sm"
-                        >
-                          {[5, 10, 20, 30].map(n => <option key={n} value={n}>{n}</option>)}
-                        </select>
-
-                        <div className="flex items-center gap-1 ml-2">
-                          <button className="border rounded p-1 disabled:opacity-50" onClick={() => setAlertPage(1)} disabled={alertPage === 1}>
-                            <ChevronsLeft size={16} />
-                          </button>
-                          <button className="border rounded p-1 disabled:opacity-50" onClick={() => setAlertPage(p => Math.max(1, p - 1))} disabled={alertPage === 1}>
-                            <ChevronLeft size={16} />
-                          </button>
-                          <span className="mx-2 text-sm">
-                            Página <strong>{alertPage}</strong> de <strong>{alertTotalPages}</strong>
-                          </span>
-                          <button className="border rounded p-1 disabled:opacity-50" onClick={() => setAlertPage(p => Math.min(alertTotalPages, p + 1))} disabled={alertPage === alertTotalPages}>
-                            <ChevronRight size={16} />
-                          </button>
-                          <button className="border rounded p-1 disabled:opacity-50" onClick={() => setAlertPage(alertTotalPages)} disabled={alertPage === alertTotalPages}>
-                            <ChevronsRight size={16} />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </>
-            );
-          })()}
-
+         
           <p className="text-xs text-neutral-400 mt-3">
             Umbral de “bajo stock”: &lt; {THRESHOLD} unidades por canal (aplicado al conjunto filtrado).
           </p>

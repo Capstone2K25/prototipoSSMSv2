@@ -22,12 +22,15 @@ type Product = {
   id: number;
   name: string;
   sku: string;
-  categoria_id?: number | null;
-  categoria_nombre?: string | null;
   price: number;
+  categoria_id: number | null;
+  categoria_nombre: string | null;
   stockb2b: number;
   stockweb: number;
   stockml: number;
+  talla_id: number | null;
+  talla_etiqueta: string | null;
+  talla_tipo: 'alfanumerica' | 'numerica' | null;
 };
 
 type MLLink = {
@@ -51,7 +54,7 @@ type DraftPublish = {
   title: string;
   price: number;
   available_quantity: number;
-  category_id: string;    // MLC* fijo
+  category_id: string; // MLC* fijo
   pictures: string[];
   attributes: DraftAttr[];
   condition: string;
@@ -60,16 +63,24 @@ type DraftPublish = {
   buying_mode: string;
 };
 
+type LookupTal = { id: number; etiqueta: string; tipo: 'alfanumerica' | 'numerica'; orden: number | null };
+
+// -------- Agrupación por familia (name + categoria + tipo talla)
+type FamRow = {
+  name: string;
+  categoria_id: number | null;
+  categoria_nombre: string | null;
+  tipo: 'alfanumerica' | 'numerica';
+  byTalla: Record<number, Product>; // talla_id -> product
+};
+
+const ALFA_ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
+
 export const ChannelView = ({ channel }: ChannelViewProps) => {
   const [products, setProducts] = useState<Product[]>([]);
+  const [tallas, setTallas] = useState<LookupTal[]>([]);
   const [mlLinks, setMlLinks] = useState<Record<string, MLLink[]>>({});
   const [health, setHealth] = useState<Health | null>(null);
-
-  const [catQuery, setCatQuery] = useState("");
-  const [catOpts, setCatOpts] = useState<Array<{category_id:string; category_name:string; domain_name:string}>>([]);
-  const [catLoading, setCatLoading] = useState(false);
-  const [draftCatName, setDraftCatName] = useState<string>("");
-
 
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -82,8 +93,11 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   const [draftError, setDraftError] = useState<string | null>(null);
   const [draftSending, setDraftSending] = useState(false);
 
-  // Drag & drop / input file
-  const [isDragging, setIsDragging] = useState(false);
+  // Cat. ML buscador
+  const [catQuery, setCatQuery] = useState('');
+  const [catOpts, setCatOpts] = useState<Array<{category_id:string; category_name:string; domain_name:string}>>([]);
+  const [catLoading, setCatLoading] = useState(false);
+  const [draftCatName, setDraftCatName] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ------- Config -------
@@ -93,7 +107,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   };
   const config = channelConfig[channel];
 
-  // Mapeo de tus categorías -> IDs válidos de Mercado Libre Chile
+  // Mapeo categorías propias -> ML Chile
   const meliCategoryMap: Record<number, string> = {
     2: 'MLC3530', // Pantalones → Jeans
     3: 'MLC1197', // Shorts
@@ -111,7 +125,10 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     date.toLocaleString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   const connected = !!health?.connected;
-  const expiresInMin = useMemo(() => (!health?.expires_at_ms || !health.now_ms ? null : Math.floor((health.expires_at_ms - health.now_ms) / 60000)), [health]);
+  const expiresInMin = useMemo(
+    () => (!health?.expires_at_ms || !health.now_ms ? null : Math.floor((health.expires_at_ms - health.now_ms) / 60000)),
+    [health]
+  );
 
   // ---------- Loaders ----------
   async function fetchHealth() {
@@ -120,11 +137,36 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     else setHealth(data as Health);
   }
 
+  async function fetchTallas() {
+    const { data, error } = await supabase
+      .from('tallas')
+      .select('id_talla, tipo, etiqueta, valor_numerico')
+      .order('tipo')
+      .order('valor_numerico', { ascending: true, nullsFirst: true })
+      .order('etiqueta');
+    if (error) {
+      console.error('Error tallas', error);
+      setTallas([]);
+      return;
+    }
+    setTallas((data || []).map((t: any) => ({
+      id: Number(t.id_talla),
+      etiqueta: t.etiqueta as string,
+      tipo: t.tipo as 'alfanumerica' | 'numerica',
+      orden: t.valor_numerico ?? null,
+    })));
+  }
+
   async function fetchProducts() {
+    // Traemos cada SKU con su talla para poder agrupar por familia
     const { data, error } = await supabase
       .from('productos')
-      .select('id, name, sku, price, stockb2b, stockweb, stockml, categoria_id, categorias(nombre_categoria)')
-      .gt('stockml', 0)
+      .select(`
+        id, name, sku, price, stockb2b, stockweb, stockml, categoria_id,
+        categorias(nombre_categoria),
+        tallas: talla_id ( id_talla, etiqueta, tipo )
+      `)
+      .gt('stockml', 0) // mostramos sólo los que tienen ML > 0 (ajústalo si quieres ver todos)
       .order('id', { ascending: true });
 
     if (error) {
@@ -138,12 +180,15 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
         id: Number(p.id),
         name: p.name,
         sku: p.sku,
+        price: Number(p.price) || 0,
         categoria_id: p.categoria_id ?? null,
         categoria_nombre: p.categorias?.nombre_categoria || null,
-        price: Number(p.price) || 0,
         stockb2b: Number(p.stockb2b) || 0,
         stockweb: Number(p.stockweb) || 0,
         stockml: Number(p.stockml) || 0,
+        talla_id: p.tallas?.id_talla ?? null,
+        talla_etiqueta: p.tallas?.etiqueta ?? null,
+        talla_tipo: p.tallas?.tipo ?? null,
       }))
     );
   }
@@ -184,7 +229,8 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
       setSyncing(false);
     }
   }
-// Debounce: espera 300 ms tras teclear
+
+  // Buscar categorías de ML (debounce)
   useEffect(() => {
     const q = catQuery.trim();
     if (!showPreview) return;
@@ -208,7 +254,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await Promise.all([fetchProducts(), fetchMlLinks(), fetchHealth()]);
+      await Promise.all([fetchTallas(), fetchProducts(), fetchMlLinks(), fetchHealth()]);
       setLoading(false);
     })();
     const interval = setInterval(() => void fetchHealth(), 1000 * 60 * 3);
@@ -217,7 +263,6 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
 
   // ---------- Derivados ----------
   const key = config.stockKey;
-  const tableRows = useMemo(() => products.map((p) => ({ ...p, channelStock: (p as any)[key] as number })), [products, key]);
 
   const isSkuPublished = (sku: string) =>
     (mlLinks[sku] || []).some((l) => l.meli_status === 'active' || l.meli_status === 'paused');
@@ -225,8 +270,41 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   const firstActiveItemId = (sku: string) =>
     (mlLinks[sku] || []).find((l) => l.meli_status === 'active' || l.meli_status === 'paused')?.meli_item_id || null;
 
-  const totalLinked = useMemo(() => tableRows.filter((p) => isSkuPublished(p.sku)).length, [tableRows, mlLinks]);
-  const totalStock = useMemo(() => tableRows.reduce((sum, p) => sum + (p.channelStock || 0), 0), [tableRows]);
+  // Armar familias
+  const fams: FamRow[] = useMemo(() => {
+    const map = new Map<string, FamRow>();
+    for (const p of products) {
+      const tipo = (p.talla_tipo || 'alfanumerica') as 'alfanumerica' | 'numerica';
+      const key = `${p.name}::${p.categoria_id ?? 0}::${tipo}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          name: p.name,
+          categoria_id: p.categoria_id ?? null,
+          categoria_nombre: p.categoria_nombre ?? null,
+          tipo,
+          byTalla: {},
+        });
+      }
+      if (p.talla_id) {
+        map.get(key)!.byTalla[p.talla_id] = p;
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [products]);
+
+  // Todas las tallas por tipo (para construir columnas de la matriz)
+  const tallasByTipo = useMemo(() => ({
+    alfanumerica: tallas.filter(t => t.tipo === 'alfanumerica').sort((a,b) => ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta)),
+    numerica: tallas.filter(t => t.tipo === 'numerica').sort((a,b) => (a.orden ?? 0) - (b.orden ?? 0)),
+  }), [tallas]);
+
+  const columnsForFam = (fam: FamRow) =>
+    fam.tipo === 'numerica' ? tallasByTipo.numerica : tallasByTipo.alfanumerica;
+
+  const totalStockML = useMemo(
+    () => products.reduce((sum, p) => sum + ((p as any)[key] as number || 0), 0),
+    [products, key]
+  );
 
   // ---------- Publicar ----------
   function openPublishPreview(p: Product) {
@@ -248,12 +326,11 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
       buying_mode: 'buy_it_now',
     };
     setDraft(d);
-    setDraftCatName(""); // nombre visible (lo llenará el buscador si el usuario cambia)
+    setDraftCatName('');
     setDraftError(null);
     setShowPreview(true);
-    setCatQuery(""); 
+    setCatQuery('');
     setCatOpts([]);
-
   }
 
   async function confirmPublish() {
@@ -262,12 +339,10 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     if (!draft.title.trim()) return setDraftError('Título requerido');
     if (!draft.pictures.length) return setDraftError('Debes subir al menos una imagen');
 
-    // forzar categoría válida MLC*
     const safeDraft: DraftPublish = {
-  ...draft,
-  category_id: draft.category_id.startsWith('ML') ? draft.category_id : 'MLC3530',
-};
-
+      ...draft,
+      category_id: draft.category_id.startsWith('ML') ? draft.category_id : 'MLC3530',
+    };
 
     try {
       setDraftSending(true);
@@ -308,7 +383,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     return data.publicUrl;
   }
 
-  const handleRowAction = async (p: Product) => {
+  const handleCellAction = async (p: Product) => {
     try {
       setRowBusy(p.sku);
       if (!connected) throw new Error('Mercado Libre desconectado');
@@ -349,7 +424,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
       </div>
 
       {/* Métricas */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white rounded-xl shadow-sm border p-6">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-semibold text-neutral-600 uppercase">Estado</h3>
@@ -372,32 +447,19 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-sm font-semibold text-neutral-600 uppercase mb-2">Productos</h3>
-          <p className="text-2xl font-bold">{totalLinked}/{tableRows.length}</p>
-          <p className="text-sm text-neutral-500 mt-1">publicados / visibles</p>
+          <h3 className="text-sm font-semibold text-neutral-600 uppercase mb-2">Productos con stock ML</h3>
+          <p className="text-2xl font-bold">{fams.length}</p>
+          <p className="text-sm text-neutral-500 mt-1">agrupadas por nombre + categoría</p>
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border p-6">
           <h3 className="text-sm font-semibold text-neutral-600 uppercase mb-2">Stock ML Total</h3>
-          <p className="text-2xl font-bold">{totalStock}</p>
+          <p className="text-2xl font-bold">{totalStockML}</p>
           <p className="text-sm text-neutral-500 mt-1">unidades</p>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-sm font-semibold text-neutral-600 uppercase mb-3">Acciones</h3>
-          <button
-            disabled={!connected || syncing || tableRows.length === 0}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-neutral-900 text-white rounded-lg hover:bg-neutral-800 disabled:opacity-50"
-            onClick={handleSyncAll}
-            title="Sincroniza catálogo y enlaces ML"
-          >
-            <Repeat size={18} />
-            <span>Sincronizar catálogo</span>
-          </button>
         </div>
       </div>
 
-      {/* Tabla */}
+      {/* Tabla agrupada por familia con matriz de tallas */}
       <div className="bg-white rounded-xl shadow-sm border p-6">
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-lg font-bold text-neutral-900">Productos en {config.title}</h3>
@@ -409,80 +471,110 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
             <thead>
               <tr className="border-b">
                 <th className="text-left  py-3 px-4 text-sm font-semibold">Producto</th>
-                <th className="text-left  py-3 px-4 text-sm font-semibold">SKU</th>
-                <th className="text-center py-3 px-4 text-sm font-semibold">Precio</th>
-                <th className="text-center py-3 px-4 text-sm font-semibold">Stock ML</th>
-                <th className="text-center py-3 px-4 text-sm font-semibold">Publicación ML</th>
-                <th className="text-center py-3 px-4 text-sm font-semibold">Acción</th>
+                <th className="text-left  py-3 px-4 text-sm font-semibold">Tallas (Stock ML / Publicación)</th>
+                <th className="text-center py-3 px-4 text-sm font-semibold">Total ML</th>
               </tr>
             </thead>
             <tbody>
-              {tableRows.map((product) => {
-                const published = isSkuPublished(product.sku);
-                const activeItemId = firstActiveItemId(product.sku);
+              {fams.map((fam, idx) => {
+                const cols = columnsForFam(fam);
+                const totalFam = cols.reduce((acc, t) => acc + (fam.byTalla[t.id]?.stockml || 0), 0);
+
                 return (
-                  <tr key={product.id} className="border-b hover:bg-neutral-50">
-                    <td className="py-4 px-4">
-                      <div>
-                        <p className="font-semibold">{product.name}</p>
-                        <p className="text-sm text-neutral-500">{product.categoria_nombre || '—'}</p>
+                  <tr key={fam.name + idx} className="border-b align-top">
+                    {/* Columna nombre/categoría */}
+                    <td className="py-4 px-4 w-64">
+                      <div className="font-semibold">{fam.name}</div>
+                      <div className="text-sm text-neutral-500">{fam.categoria_nombre || '—'}</div>
+                      <div className="text-[11px] text-neutral-500">
+                        {fam.tipo === 'numerica' ? 'Tallas numéricas' : 'Tallas alfanuméricas'}
                       </div>
                     </td>
+
+                    {/* Matriz de tallas */}
                     <td className="py-4 px-4">
-                      <code className="text-sm bg-neutral-100 px-2 py-1 rounded">{product.sku}</code>
-                    </td>
-                    <td className="py-4 px-4 text-center font-semibold">
-                      {new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(product.price || 0)}
-                    </td>
-                    <td className="py-4 px-4 text-center font-bold">{product.stockml}</td>
-                    <td className="py-4 px-4">
-                      <div className="flex items-center justify-center gap-2">
-                        {published && activeItemId ? (
-                          <a
-                            className="bg-green-50 text-green-700 text-xs font-semibold px-3 py-1 rounded-full inline-flex items-center gap-1"
-                            href={`https://articulo.mercadolibre.cl/${activeItemId}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            <LinkIcon size={14} />
-                            <span>Publicado</span>
-                          </a>
-                        ) : (
-                          <span className="bg-neutral-100 text-neutral-600 text-xs font-semibold px-3 py-1 rounded-full inline-flex items-center gap-1">
-                            <AlertCircle size={14} />
-                            <span>Sin publicar</span>
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="flex justify-center">
-                        <button
-                          onClick={() => handleRowAction(product)}
-                          disabled={!connected || rowBusy === product.sku}
-                          className={`flex items-center gap-2 px-3 py-2 rounded
-                            ${isSkuPublished(product.sku) ? 'bg-blue-600 hover:bg-blue-700' : 'bg-amber-600 hover:bg-amber-700'}
-                            text-white disabled:opacity-50`}
-                          title={isSkuPublished(product.sku) ? 'Refrescar estado desde ML' : 'Publicar en ML'}
+                      <div className="overflow-x-auto" style={{ minWidth: 420 }}>
+                        <div
+                          className="grid gap-y-2 gap-x-2 items-center"
+                          style={{ gridTemplateColumns: `120px repeat(${cols.length}, minmax(84px, 1fr))` }}
                         >
-                          {rowBusy === product.sku ? (
-                            <RefreshCw size={16} className="animate-spin" />
-                          ) : isSkuPublished(product.sku) ? (
-                            <Repeat size={16} />
-                          ) : (
-                            <Upload size={16} />
-                          )}
-                          <span>{isSkuPublished(product.sku) ? 'Refrescar ML' : 'Publicar en ML'}</span>
-                        </button>
+                          {/* Encabezados tallas */}
+                          <div></div>
+                          {cols.map(t => (
+                            <div key={t.id} className="text-center text-xs text-neutral-700 font-medium">{t.etiqueta}</div>
+                          ))}
+
+                          {/* Fila: Stock ML */}
+                          <div className="text-right pr-2">
+                            <span className="px-2 py-1 rounded text-xs font-semibold bg-amber-100 text-amber-700">Stock ML</span>
+                          </div>
+                          {cols.map(t => {
+                            const p = fam.byTalla[t.id];
+                            const val = p?.stockml ?? 0;
+                            const cls = val === 0 ? 'text-red-600' : val < 5 ? 'text-orange-600' : 'text-green-700';
+                            return (
+                              <div key={t.id} className="text-center">
+                                <span className={`font-semibold ${cls}`}>{val}</span>
+                              </div>
+                            );
+                          })}
+
+                          {/* Fila: Publicación / Acción */}
+                          <div className="text-right pr-2">
+                            <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">Publicación</span>
+                          </div>
+                          {cols.map(t => {
+                            const p = fam.byTalla[t.id];
+                            if (!p) return <div key={t.id} className="text-center text-neutral-400">—</div>;
+                            const published = isSkuPublished(p.sku);
+                            const activeItemId = firstActiveItemId(p.sku);
+                            return (
+                              <div key={t.id} className="text-center">
+                                {published && activeItemId ? (
+                                  <a
+                                    className="bg-green-50 text-green-700 text-[11px] font-semibold px-2 py-1 rounded-full inline-flex items-center gap-1"
+                                    href={`https://articulo.mercadolibre.cl/${activeItemId}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    <LinkIcon size={12} />
+                                    <span>Publicado</span>
+                                  </a>
+                                ) : (
+                                  <button
+                                    onClick={() => handleCellAction(p)}
+                                    disabled={!connected || rowBusy === p.sku}
+                                    className={`text-[11px] font-semibold px-2 py-1 rounded-full inline-flex items-center gap-1 text-white
+                                      ${published ? 'bg-blue-600 hover:bg-blue-700' : 'bg-amber-600 hover:bg-amber-700'}
+                                      disabled:opacity-50`}
+                                    title={published ? 'Refrescar ML' : 'Publicar en ML'}
+                                  >
+                                    {rowBusy === p.sku ? (
+                                      <RefreshCw size={12} className="animate-spin" />
+                                    ) : published ? (
+                                      <Repeat size={12} />
+                                    ) : (
+                                      <Upload size={12} />
+                                    )}
+                                    <span>{published ? 'Refrescar' : 'Publicar'}</span>
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     </td>
+
+                    {/* Total por familia */}
+                    <td className="py-4 px-4 text-center font-bold">{totalFam}</td>
                   </tr>
                 );
               })}
 
-              {tableRows.length === 0 && (
+              {fams.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="text-center py-6 text-neutral-500">
+                  <td colSpan={3} className="text-center py-6 text-neutral-500">
                     No hay productos para mostrar.
                   </td>
                 </tr>
@@ -534,8 +626,8 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                   </div>
                 </div>
 
-                {/* Categoría bloqueada para evitar conflictos */}
-               <label className="text-sm text-neutral-600">Categoría</label>
+                {/* Categoría ML (buscador) */}
+                <label className="text-sm text-neutral-600">Categoría</label>
                 <div className="relative">
                   <input
                     className="w-full border rounded-xl p-3 pr-24"
@@ -544,10 +636,9 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                     onChange={(e) => setCatQuery(e.target.value)}
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-neutral-500">
-                    {catLoading ? "Buscando..." : "MLC"}
+                    {catLoading ? 'Buscando...' : 'MLC'}
                   </span>
 
-                  {/* Dropdown de sugerencias */}
                   {catOpts.length > 0 && (
                     <div className="absolute z-10 mt-1 w-full bg-white border rounded-lg max-h-56 overflow-auto shadow">
                       {catOpts.map(opt => (
@@ -555,7 +646,6 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                           type="button"
                           key={opt.category_id + opt.domain_name}
                           onClick={() => {
-                            // fija categoría válida de ML
                             setDraft(d => d ? { ...d, category_id: opt.category_id } : d);
                             setDraftCatName(`${opt.category_name}`);
                             setCatQuery(`${opt.category_name}`);
@@ -573,7 +663,6 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                 <p className="text-xs text-neutral-500 mt-1">
                   {draft?.category_id || '—'} · valor asignado para Mercado Libre
                 </p>
-
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -637,21 +726,8 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                   }`}
                   onDragOver={(e) => {
                     e.preventDefault();
-                    setIsDragging(true);
-                  }}
-                  onDragLeave={() => setIsDragging(false)}
-                  onDrop={async (e) => {
-                    e.preventDefault();
-                    setIsDragging(false);
-                    try {
-                      const file = e.dataTransfer.files?.[0];
-                      if (!file) return;
-                      if (!file.type.startsWith('image/')) throw new Error('Solo se permiten imágenes');
-                      const url = await uploadFileToStorage(file);
-                      setDraft((d) => (d ? { ...d, pictures: [url, ...d.pictures] } : d));
-                    } catch (err: any) {
-                      setDraftError(err?.message || 'No se pudo cargar la imagen');
-                    }
+                    // eslint-disable-next-line react-hooks/rules-of-hooks
+                    // hooks no aquí
                   }}
                 >
                   <img
@@ -662,11 +738,6 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                     alt="preview"
                     className="h-full object-contain"
                   />
-                  {isDragging && (
-                    <div className="absolute inset-0 flex items-center justify-center text-sm font-medium text-amber-700">
-                      Suelta la imagen para subirla
-                    </div>
-                  )}
                 </div>
 
                 <div className="mt-3 flex items-center gap-2">
@@ -697,7 +768,6 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                   </button>
                 </div>
 
-                {/* miniaturas */}
                 {draft.pictures.length > 0 && (
                   <div className="mt-4 grid grid-cols-4 gap-3">
                     {draft.pictures.map((url, i) => (
