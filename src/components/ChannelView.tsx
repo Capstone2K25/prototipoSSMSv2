@@ -95,7 +95,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     // SOLO productos con stockml > 0
     const { data, error } = await supabase
       .from('productos')
-      .select('id, name, sku, categoria, price, stockb2b, stockweb, stockml')
+      .select('id, name, sku, categoria_id, price, stockb2b, stockweb, stockml')
       .gt('stockml', 0)
       .order('id', { ascending: true });
 
@@ -108,7 +108,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
       id: Number(p.id),
       name: p.name,
       sku: p.sku,
-      categoria: p.categoria ?? '',
+      categoria: '',
       price: Number(p.price) || 0,
       stockb2b: Number(p.stockb2b) || 0,
       stockweb: Number(p.stockweb) || 0,
