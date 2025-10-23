@@ -4,7 +4,7 @@ import { Plus, Pencil, Trash2, X, ChevronsLeft, ChevronLeft, ChevronRight, Chevr
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import { emitAlert } from '../state/alertsBus';
-import { wooCreateProductLocal, wooDeleteProductLocal, wooPushStockLocal } from '../data/woo';
+import { wooCreateProductLocal, wooDeleteProductLocal, wooPushStockLocal, wooUpdateProductLocal } from '../data/woo';
 
 type LookupCat = { id: number; name: string };
 type LookupTal = { id: number; tipo: 'alfanumerica' | 'numerica'; etiqueta: string; orden: number | null };
@@ -177,14 +177,35 @@ export const StockManager = () => {
     }
   };
 
-  // carga inicial: primero lookups, luego productos
+  // carga inicial
   useEffect(() => { loadLookups(); }, []);
+
   useEffect(() => {
-    if (cats.length && tallas.length) fetchProducts();
+    if (cats.length && vars.length && cols.length && tallas.length) {
+      fetchProducts();
+    }
     const interval = setInterval(() => fetchProducts({ silent: true, keepSelection: true }), 100000);
-    return () => { clearInterval(interval); abortRef.current?.abort(); };
+    return () => {
+      clearInterval(interval);
+      abortRef.current?.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cats.length, tallas.length]);
+  }, [cats.length, vars.length, cols.length, tallas.length]);
+
+  // refresca los nombres de categoría/variante/color/talla cuando llegan los lookups
+  useEffect(() => {
+    if (products.length === 0) return;
+    setProducts(prev =>
+      prev.map(p => ({
+        ...p,
+        categoria_nombre: p.categoria_id ? catById[p.categoria_id] : '',
+        variante_nombre:  p.variante_id  ? varById[p.variante_id]   : '',
+        color_nombre:     p.color_id     ? colById[p.color_id]      : '',
+        talla_etiqueta:   p.talla_id     ? talById[p.talla_id]      : '',
+      }))
+    );
+  }, [catById, varById, colById, talById]);
+
 
   // refetch en cambios de filtros
   useEffect(() => { setPage(1); }, [categoryFilter, debouncedSearch, pageSize]);
@@ -233,24 +254,52 @@ export const StockManager = () => {
     fetchProducts({ silent: true });
   };
 
-  // ===== Agrupación por FAMILIA (name + categoria + tipo de talla)
-  const filtered = useMemo(() => {
-    const term = debouncedSearch.toLowerCase();
-    return products.filter(p => {
-      const matchCat = categoryFilter === 'all' || (p.categoria_id ?? null) === categoryFilter;
-      const matchText = !term || (p.name || '').toLowerCase().includes(term) || (p.sku || '').toLowerCase().includes(term);
-      return matchCat && matchText;
-    });
-  }, [products, categoryFilter, debouncedSearch]);
+  // buscar SKU
+  const handleSKUBlur = async () => {
+    const sku = editingProduct?.sku?.toString()?.trim();
+    if (!sku) return;
 
-  const fams = useMemo<FamRow[]>(() => {
-    const map = new Map<FamKey, FamRow>();
-    for (const p of filtered) {
-      const t = p.talla_id ? tallaById[p.talla_id] : null;
-      const tipo = (t?.tipo ?? 'alfanumerica') as 'alfanumerica'|'numerica';
-      const key: FamKey = `${p.name}::${p.categoria_id ?? 0}::${tipo}`;
-      if (!map.has(key)) map.set(key, { name: p.name, categoria_id: p.categoria_id ?? null, tipo, byTalla: {} });
-      if (p.talla_id) map.get(key)!.byTalla[p.talla_id] = p;
+    try {
+      const { data, error } = await supabase
+        .from('productos')
+        .select('id, name, sku, price, categoria_id, variante_id, color_id, talla_id, stockb2b, stockweb, stockml')
+        .eq('sku', sku)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (data) {
+        setIsExistingSKU(true);
+        setEditingProduct({
+          id: Number(data.id),
+          name: data.name,
+          sku: data.sku,
+          price: Number(data.price) || 0,
+          categoria_id: data.categoria_id,
+          variante_id: data.variante_id,
+          color_id: data.color_id,
+          talla_id: data.talla_id,
+          _originalstockb2b: Number(data.stockb2b) || 0,
+          _originalstockweb: Number(data.stockweb) || 0,
+          _originalstockml:  Number(data.stockml)  || 0,
+          stockb2b: '',
+          stockweb: '',
+          stockml:  '',
+        });
+        toastAndLog(`SKU encontrado: ${data.name} — puedes editar nombre, precio y stock`, 'info');
+      } else {
+        setIsExistingSKU(false);
+        setEditingProduct((prev: any) => ({
+          ...prev,
+          stockb2b: '',
+          stockweb: '',
+          stockml:  ''
+        }));
+        toastAndLog(`SKU no encontrado: ${sku} — completa para crear`, 'info');
+      }
+    } catch (err) {
+      console.error('Error buscando SKU:', err);
+      toastAndLog('Error al buscar SKU.', 'error');
     }
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [filtered, tallaById]);
@@ -262,82 +311,112 @@ export const StockManager = () => {
       : [...tallasFam].sort((a,b) => ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta));
   };
 
-  // abrir modal de edición MATRIZ por familia
- const openEditFamily = (fam: FamRow) => {
-  const cols = columnsForFam(fam);
-  const values: EditFamilyState['values'] = {};
-  let basePrice = 0;
-
-  cols.forEach(t => {
-    const p = fam.byTalla[t.id];
-    values[t.id] = {
-      id: p?.id,
-      b2b: Number(p?.stockb2b ?? 0),
-      web: Number(p?.stockweb ?? 0),
-      ml:  Number(p?.stockml  ?? 0),
-      price: Number(p?.price ?? 0),
-    };
-    if (p && !basePrice) basePrice = Number(p.price ?? 0);
-  });
-
-  setEditingFamily({
-    name: fam.name,
-    categoria_id: fam.categoria_id,
-    tipo: fam.tipo,
-    cols,
-    values,
-    basePrice, // fallback para tallas nuevas
-  });
-  setIsExistingSKU(true);
-  setShowModal(true);
-};
-
-
-
-
-  // paginación sobre familias
-  const totalFamilies = fams.length;
-  const totalPages = Math.max(1, Math.ceil(totalFamilies / pageSize));
-  const showingFrom = totalFamilies === 0 ? 0 : (page - 1) * pageSize + 1;
-  const showingTo = Math.min(totalFamilies, page * pageSize);
-  const pageFams = useMemo(() => fams.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize), [fams, page, pageSize]);
-
-  const goFirst = () => setPage(1);
-  const goPrev = () => setPage((p) => Math.max(1, p - 1));
-  const goNext = () => setPage((p) => Math.min(totalPages, p + 1));
-  const goLast = () => setPage(totalPages);
-
-  // ====== Guardar
+  // guardar
   const saveProduct = async () => {
+    if (!editingProduct?.sku) return toast.error('El SKU es obligatorio.');
+
     try {
-      if (isExistingSKU && editingFamily) {
-  const updates: Array<{ id:number; stockb2b:number; stockweb:number; stockml:number; price:number }> = [];
-  const creates: Array<{ name:string; price:number; categoria_id:number|null; talla_id:number; stockb2b:number; stockweb:number; stockml:number }> = [];
+      if (isExistingSKU) {
+        // EDITAR: deltas
+        const origB2B = Number(editingProduct._originalstockb2b || 0);
+        const origWeb = Number(editingProduct._originalstockweb || 0);
+        const origMl  = Number(editingProduct._originalstockml  || 0);
 
-  for (const t of editingFamily.cols) {
-    const v = editingFamily.values[t.id];
-    if (!v) continue;
+        const deltaB2B = toInt(editingProduct.stockb2b);
+        const deltaWeb = toInt(editingProduct.stockweb);
+        const deltaMl  = toInt(editingProduct.stockml);
 
-    const b2b = Math.max(0, Number(v.b2b || 0));
-    const web = Math.max(0, Number(v.web || 0));
-    const ml  = Math.max(0, Number(v.ml  || 0));
-    const price = Math.max(0, Number(v.price || editingFamily.basePrice || 0));
+        if (deltaB2B === 0 && deltaWeb === 0 && deltaMl === 0 && !editingProduct?.name && !editingProduct?.price) {
+          return toast.error('No ingresaste cambios.');
+        }
 
-    if (v.id) {
-      updates.push({ id: v.id, stockb2b: b2b, stockweb: web, stockml: ml, price });
-    } else {
-      const total = b2b + web + ml;
-      if (total > 0) {
-        creates.push({
-          name: editingFamily.name,
-          price,
-          categoria_id: editingFamily.categoria_id ?? null,
-          talla_id: t.id,
-          stockb2b: b2b, stockweb: web, stockml: ml,
-        });
-      }
-    }
-  }
+        const nuevos = {
+          stockb2b: origB2B + deltaB2B,
+          stockweb: origWeb + deltaWeb,
+          stockml:  origMl  + deltaMl,
+        };
+
+        if (nuevos.stockb2b < 0 || nuevos.stockweb < 0 || nuevos.stockml < 0) {
+          return toast.error('El stock no puede quedar negativo.');
+        }
+
+        // 1) Actualiza stocks en BD
+        let res;
+        if (editingProduct?.id) {
+          res = await supabase.from('productos').update(nuevos).eq('id', Number(editingProduct.id)).select().maybeSingle();
+        } else {
+          res = await supabase.from('productos').update(nuevos).eq('sku', editingProduct.sku.toString().trim()).select().maybeSingle();
+        }
+
+        const { data, error } = res;
+        if (error) {
+          console.error('Error al actualizar stock:', error);
+          return toastAndLog(error.message || 'Error al actualizar stock.', 'error');
+        }
+        if (!data) return toastAndLog('No se actualizó ninguna fila (SKU o ID no encontrado).', 'error');
+
+        // 2) Actualiza detalles + stock absoluto web en Woo (y refleja nombre/precio en BD si la función los toca también)
+        try {
+          const currentName = (data?.name ?? '').trim();
+          const currentPrice = Number(data?.price ?? 0);
+
+          const desiredName = String(editingProduct?.name ?? currentName).trim();
+          const desiredPrice = toInt(editingProduct?.price ?? currentPrice);
+
+          const payload: {
+            skuLocal: string;
+            name?: string;
+            price?: number;
+            absoluteStockWeb?: number;
+          } = { skuLocal: String(editingProduct.sku) };
+
+          let hasChanges = false;
+
+          if (desiredName && desiredName !== currentName) {
+            payload.name = desiredName;
+            hasChanges = true;
+          }
+          if (Number.isFinite(desiredPrice) && desiredPrice !== currentPrice) {
+            payload.price = desiredPrice;
+            hasChanges = true;
+          }
+
+          // siempre mandamos el stock web absoluto para alinear Woo
+          payload.absoluteStockWeb = Number(nuevos.stockweb);
+          hasChanges = true;
+
+          if (hasChanges) {
+            await wooUpdateProductLocal(payload);
+          }
+        } catch (e) {
+          console.error("Actualizar detalles en Woo/BD falló:", e);
+          toastAndLog("Stocks guardados en BD, pero el update de Woo falló.", "error");
+        }
+
+        const name = (editingProduct?.name || data.name || '(sin nombre)').toString();
+        const sku  = editingProduct?.sku  || data.sku;
+        const totalAntes   = origB2B + origWeb + origMl;
+        const totalDespues = nuevos.stockb2b + nuevos.stockweb + nuevos.stockml;
+
+        toastAndLog(
+          `Actualizado: ${name} (SKU ${sku}) • B2B ${origB2B}→${nuevos.stockb2b} | Web ${origWeb}→${nuevos.stockweb} | ML ${origMl}→${nuevos.stockml} • Total ${totalAntes}→${totalDespues}`,
+          'sync'
+        );
+      } else {
+        // CREAR
+        const name = (editingProduct.name || '').toString().trim();
+        const price = toInt(editingProduct.price);
+        const categoria_id = Number(editingProduct.categoria_id || 0) || null;
+        const variante_id  = Number(editingProduct.variante_id  || 0) || null;
+        const color_id     = Number(editingProduct.color_id     || 0) || null;
+        const talla_id     = Number(editingProduct.talla_id     || 0) || null;
+
+        // SKU SIEMPRE desde las opciones, no desde el input:
+        const sku = buildSku(categoria_id, variante_id, color_id, talla_id);
+
+        if (!name || !price || !categoria_id || !variante_id || !color_id || !talla_id) {
+          return toast.error('Completa nombre, precio, categoría, variante, color y talla.');
+        }
 
   // UPDATE existentes (incluye precio)
   if (updates.length) {
@@ -453,6 +532,38 @@ toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
         return ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta);
       });
   }, [tallas, selectedCatName]);
+
+  // cuando cambian FKs, autoconstruir SKU si el usuario no lo tocó manualmente
+  useEffect(() => {
+    if (!showModal || !editingProduct) return;
+
+    // SKU solo auto para "agregar" (isExistingSKU === false)
+    if (!isExistingSKU) {
+      const autoSku = buildSku(
+        Number(editingProduct?.categoria_id || 0),
+        Number(editingProduct?.variante_id  || 0),
+        Number(editingProduct?.color_id     || 0),
+        Number(editingProduct?.talla_id     || 0),
+      );
+      setEditingProduct((prev: any) => ({ ...prev, sku: autoSku }));
+    }
+  }, [
+    showModal,
+    isExistingSKU,
+    editingProduct?.categoria_id,
+    editingProduct?.variante_id,
+    editingProduct?.color_id,
+    editingProduct?.talla_id,
+  ]);
+
+  // paginación
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const showingFrom = totalRows === 0 ? 0 : (page - 1) * pageSize + 1;
+  const showingTo = Math.min(totalRows, page * pageSize);
+  const goFirst = () => setPage(1);
+  const goPrev = () => setPage((p) => Math.max(1, p - 1));
+  const goNext = () => setPage((p) => Math.min(totalPages, p + 1));
+  const goLast = () => setPage(totalPages);
 
   if (loading) return <div className="text-center py-12 text-neutral-500">Cargando datos...</div>;
 
@@ -730,42 +841,122 @@ toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
             </button>
 
             <h3 className="text-lg font-semibold mb-3">
-              {isExistingSKU ? 'Editar stock por tallas' : 'Agregar producto nuevo'}
+              {isExistingSKU ? 'Actualizar producto' : 'Agregar producto nuevo'}
             </h3>
 
-            {/* MODO EDITAR: MATRIZ */}
-            {isExistingSKU && editingFamily && (
+            {/* SKU */}
+            <div className="mb-3">
+              <label className="block text-sm text-neutral-600 mb-1">SKU</label>
+
+              {/* Agregar: SKU bloqueado y auto-generado */}
+              {!isExistingSKU && (
+                <input
+                  type="text"
+                  value={editingProduct?.sku || ''}
+                  readOnly
+                  className="w-full border rounded px-3 py-2 bg-neutral-100 text-neutral-700"
+                  title="El SKU se genera automáticamente según Categoría, Variante, Color y Talla"
+                />
+              )}
+
+              {/* Editar: SKU solo lectura */}
+              {isExistingSKU && (
+                <input
+                  type="text"
+                  value={editingProduct?.sku || ''}
+                  readOnly
+                  className="w-full border rounded px-3 py-2 bg-neutral-100 text-neutral-700"
+                />
+              )}
+
+              {!isExistingSKU && (
+                <p className="text-[11px] text-neutral-500 mt-1">
+                  Se genera como <code>SKU-XXYYZZTT</code> según tus selecciones.
+                </p>
+              )}
+            </div>
+
+            {isExistingSKU ? (
               <>
-                <div className="mb-2 text-sm text-neutral-600">
-                  <strong>Producto:</strong> {editingFamily.name}
+                {/* Nombre editable */}
+                <div className="mb-3">
+                  <label className="block text-sm text-neutral-600 mb-1">Nombre</label>
+                  <input
+                    type="text"
+                    value={editingProduct?.name || ''}
+                    onChange={(e) =>
+                      setEditingProduct((prev: any) => ({ ...prev, name: e.target.value }))
+                    }
+                    className="w-full border rounded px-3 py-2"
+                  />
                 </div>
-                <div className="mb-2 text-sm text-neutral-600">
-                  <strong>Categoría:</strong> {editingFamily.categoria_id ? catById[editingFamily.categoria_id] : '—'}
+
+                {/* Precio editable */}
+                <div className="mb-3">
+                  <label className="block text-sm text-neutral-600 mb-1">Precio</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={
+                      editingProduct?.price === 0 || editingProduct?.price
+                        ? String(editingProduct.price)
+                        : ''
+                    }
+                    onBeforeInput={(e) => {
+                      const el = e.currentTarget as HTMLInputElement;
+                      const start = el.selectionStart ?? el.value.length;
+                      const end = el.selectionEnd ?? el.value.length;
+                      const data = (e as unknown as InputEvent).data ?? '';
+                      const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                      if (!/^\d*$/.test(proposed)) e.preventDefault();
+                    }}
+                    onPaste={(e) => {
+                      const t = e.clipboardData?.getData('text') ?? '';
+                      if (!/^\d*$/.test(t)) e.preventDefault();
+                    }}
+                    onChange={(e) =>
+                      setEditingProduct((prev: any) => ({
+                        ...prev,
+                        price: e.target.value.replace(/[^\d]/g, ''),
+                      }))
+                    }
+                    className="w-full border rounded px-3 py-2"
+                  />
                 </div>
-                <div className="mb-3 text-sm">
-  <label className="block text-neutral-600 mb-1">
-    Precio base (se usará al crear tallas nuevas)
-  </label>
-  <input
-    type="text"
-    inputMode="numeric"
-    className="border rounded px-3 py-2 w-40"
-    value={String(editingFamily.basePrice ?? 0)}
-    onBeforeInput={(e) => {
-      const el = e.currentTarget;
-      const start = el.selectionStart ?? el.value.length;
-      const end = el.selectionEnd ?? el.value.length;
-      const data = (e as any).data ?? '';
-      const proposed = el.value.slice(0, start) + data + el.value.slice(end);
-      if (!/^\d*$/.test(proposed)) e.preventDefault();
-    }}
-    onPaste={(e) => {
-      const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
-      if (!/^\d*$/.test(paste)) e.preventDefault();
-    }}
-    onChange={(e) => setEditingFamily(prev => prev ? { ...prev, basePrice: Number(e.target.value || 0) } : prev)}
-  />
-</div>
+
+                {/* Deltas de stock */}
+                <div className="grid grid-cols-3 gap-3 mt-3">
+                  {/* B2B */}
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                      Sumar a <span className="px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 text-[10px]">B2B</span>
+                    </label>
+                    <div className="text-xs text-neutral-500 mb-1">
+                      Actual: <strong>{editingProduct?._originalstockb2b ?? 0}</strong>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editingProduct?.stockb2b ?? ''}
+                      onBeforeInput={(e) => {
+                        const el = e.currentTarget;
+                        const start = el.selectionStart ?? el.value.length;
+                        const end = el.selectionEnd ?? el.value.length;
+                        const data = (e as any).data ?? '';
+                        const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                        if (!/^(-?\d*)$/.test(proposed)) e.preventDefault();
+                        if (data === '-' && start !== 0) e.preventDefault();
+                        if (data?.includes('-') && el.value.includes('-') && start === 0) e.preventDefault();
+                      }}
+                      onPaste={(e) => {
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        if (!/^(-?\d*)$/.test(paste)) e.preventDefault();
+                      }}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stockb2b: e.target.value })}
+                      className="w-full border rounded px-2 py-2"
+                      placeholder="Ej: -2 o 5"
+                    />
+                  </div>
 
                 <div className="mb-3 text-[11px] text-neutral-500">Edita el stock <strong>absoluto</strong> por talla y canal.</div>
 
