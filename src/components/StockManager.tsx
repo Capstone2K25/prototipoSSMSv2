@@ -4,9 +4,11 @@ import { Plus, Pencil, Trash2, X, ChevronsLeft, ChevronLeft, ChevronRight, Chevr
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import { emitAlert } from '../state/alertsBus';
-import { wooCreateProductLocal, wooDeleteProductLocal, wooPushStockLocal, wooUpdateProductLocal } from '../data/woo';
+import { wooCreateProductLocal, wooDeleteProductLocal, wooPushStockLocal } from '../data/woo';
 
 type LookupCat = { id: number; name: string };
+type LookupVar = { id: number; name: string };
+type LookupCol = { id: number; name: string };
 type LookupTal = { id: number; tipo: 'alfanumerica' | 'numerica'; etiqueta: string; orden: number | null };
 
 type Product = {
@@ -14,61 +16,58 @@ type Product = {
   name: string;
   sku: string;
   price: number;
+  // FKs
   categoria_id: number | null;
+  variante_id: number | null;
+  color_id: number | null;
   talla_id: number | null;
+  // stocks
   stockb2b: number;
   stockweb: number;
   stockml: number;
+  // Derivados para UI
+  categoria_nombre?: string;
+  variante_nombre?: string;
+  color_nombre?: string;
+  talla_etiqueta?: string;
 };
 
+type SortField =
+  | 'name' | 'sku' | 'price'
+  | 'stockb2b' | 'stockweb' | 'stockml'
+  | 'categoria_nombre' | 'variante_nombre' | 'color_nombre' | 'talla_etiqueta';
 type SortOrder = 'asc' | 'desc';
-type Channel = 'B2B' | 'Web' | 'ML';
-
-type FamKey = string; // `${name}::${categoria_id}::${tipo}`
-type FamRow = {
-  name: string;
-  categoria_id: number | null;
-  tipo: 'alfanumerica' | 'numerica';
-  byTalla: Record<number, Product>; // talla_id -> producto
-};
-
-type EditFamilyState = {
-  name: string;
-  // en el type EditFamilyState:
-basePrice: number; // nuevo
-
-  categoria_id: number | null;
-  tipo: 'alfanumerica' | 'numerica';
-  cols: LookupTal[]; // columnas (tallas)
-  values: Record<number, { // key = id_talla
-    id?: number;          // id de producto si existe
-    b2b: number;
-    web: number;
-    ml: number;
-  }>;
-};
 
 const toInt = (s: unknown) => {
   const n = parseInt(String(s ?? '').replace(/\s+/g, ''), 10);
   return Number.isFinite(n) ? n : 0;
 };
 
-const ALFA_ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
+// SKU helper: SKU- + 2 dígitos por cada ID (00 si null)
+const pad2 = (n: number | null | undefined) => String(n ?? 0).padStart(2, '0');
+const buildSku = (c: number | null | undefined, v: number | null | undefined, col: number | null | undefined, t: number | null | undefined) =>
+  `SKU-${pad2(c)}${pad2(v)}${pad2(col)}${pad2(t)}`;
 
 export const StockManager = () => {
   // datos
   const [products, setProducts] = useState<Product[]>([]);
   const [totalRows, setTotalRows] = useState<number>(0);
 
-  // lookups
+  // lookups desde BD
   const [cats, setCats] = useState<LookupCat[]>([]);
+  const [vars, setVars] = useState<LookupVar[]>([]);
+  const [cols, setCols] = useState<LookupCol[]>([]);
   const [tallas, setTallas] = useState<LookupTal[]>([]);
 
   // filtros / búsqueda
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'all' | number>('all');
 
-  // paginación (sobre familias)
+  // orden
+  const [sortField, setSortField] = useState<SortField>('name');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
+
+  // paginación
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
 
@@ -79,11 +78,10 @@ export const StockManager = () => {
 
   // modal
   const [showModal, setShowModal] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<any>(null); // se usa SOLO en "agregar"
-  const [editingFamily, setEditingFamily] = useState<EditFamilyState | null>(null); // modal matriz
-  const [isExistingSKU, setIsExistingSKU] = useState<boolean>(false); // true => modal matriz; false => modal crear
+  const [editingProduct, setEditingProduct] = useState<any>(null);
+  const [isExistingSKU, setIsExistingSKU] = useState<boolean>(false);
 
-  // selección múltiple (a nivel item/sku). Se mantiene para borrar por lista (opcional)
+  // selección múltiple
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
   // abort
@@ -96,6 +94,7 @@ export const StockManager = () => {
     return () => clearTimeout(t);
   }, [searchTerm]);
 
+  // toast
   const toastAndLog = (msg: string, type: 'info' | 'error' | 'sync' = 'info') => {
     if (type === 'error') toast.error(msg);
     else if (type === 'sync') toast.success(msg);
@@ -103,22 +102,26 @@ export const StockManager = () => {
     emitAlert({ type, message: msg, channel: 'stock' });
   };
 
-  // cargar lookups (primero)
+  // cargar lookups (una vez)
   const loadLookups = async () => {
-    const [{ data: dc }, { data: dt }] = await Promise.all([
+    const [{ data: dc }, { data: dv }, { data: dco }, { data: dt }] = await Promise.all([
       supabase.from('categorias').select('id_categoria, nombre_categoria').order('nombre_categoria', { ascending: true }),
-      supabase.from('tallas').select('id_talla, tipo, etiqueta, valor_numerico').order('tipo').order('valor_numerico', { ascending: true, nullsFirst: true }).order('etiqueta'),
+      supabase.from('variantes').select('id_variante, nombre_variante').order('nombre_variante', { ascending: true }),
+      supabase.from('colores').select('id_color, nombre_color').order('nombre_color', { ascending: true }),
+      supabase.from('tallas').select('id_talla, tipo, etiqueta, valor_numerico').order('tipo', { ascending: true }).order('valor_numerico', { ascending: true, nullsFirst: true }).order('etiqueta', { ascending: true }),
     ]);
+
     setCats((dc ?? []).map(r => ({ id: r.id_categoria, name: r.nombre_categoria })));
+    setVars((dv ?? []).map(r => ({ id: r.id_variante, name: r.nombre_variante })));
+    setCols((dco ?? []).map(r => ({ id: r.id_color, name: r.nombre_color })));
     setTallas((dt ?? []).map(r => ({ id: r.id_talla, tipo: r.tipo, etiqueta: r.etiqueta, orden: r.valor_numerico })));
   };
 
-  // diccionarios
+  // diccionarios para resolver nombres
   const catById = useMemo(() => Object.fromEntries(cats.map(c => [c.id, c.name])), [cats]);
-  const tallaById = useMemo(
-    () => Object.fromEntries(tallas.map(t => [t.id, { etiqueta: t.etiqueta, tipo: t.tipo, orden: t.orden ?? null }])),
-    [tallas]
-  );
+  const varById = useMemo(() => Object.fromEntries(vars.map(v => [v.id, v.name])), [vars]);
+  const colById = useMemo(() => Object.fromEntries(cols.map(c => [c.id, c.name])), [cols]);
+  const talById = useMemo(() => Object.fromEntries(tallas.map(t => [t.id, t.etiqueta])), [tallas]);
 
   // query productos
   const fetchProducts = async (opts?: { silent?: boolean; keepSelection?: boolean }) => {
@@ -133,33 +136,64 @@ export const StockManager = () => {
 
       let query = supabase
         .from('productos')
-        .select('id, name, sku, price, categoria_id, talla_id, stockb2b, stockweb, stockml', { count: 'exact' });
+        .select('id, name, sku, price, categoria_id, variante_id, color_id, talla_id, stockb2b, stockweb, stockml', { count: 'exact' });
 
+      // filtro categoría (por id)
       if (categoryFilter !== 'all') {
         query = query.eq('categoria_id', categoryFilter);
       }
 
+      // búsqueda por nombre o sku
       if (debouncedSearch) {
         const term = debouncedSearch.replace(/%/g, '').toLowerCase();
         query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%`);
       }
 
-      query = query.order('id', { ascending: true });
+      // orden server-side solo donde aplique
+      const serverSortable: Array<SortField> = ['name', 'sku', 'price', 'stockb2b', 'stockweb', 'stockml'];
+      if (serverSortable.includes(sortField)) {
+        query = query.order(sortField as any, { ascending: sortOrder === 'asc', nullsFirst: true });
+      } else {
+        // fallback: ordenar por id para luego ordenar en memoria
+        query = query.order('id', { ascending: true });
+      }
+
+      // paginación
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      query = query.range(from, to);
 
       const { data, error, count } = await query;
       if (error) throw error;
 
-      const mapped: Product[] = (data || []).map((p: any) => ({
+      // mapear + resolver nombres
+      let mapped: Product[] = (data || []).map((p: any) => ({
         id: Number(p.id),
         name: p.name,
         sku: p.sku,
         price: Number(p.price) || 0,
         categoria_id: p.categoria_id ?? null,
+        variante_id: p.variante_id ?? null,
+        color_id: p.color_id ?? null,
         talla_id: p.talla_id ?? null,
         stockb2b: Number(p.stockb2b) || 0,
         stockweb: Number(p.stockweb) || 0,
         stockml: Number(p.stockml) || 0,
+        categoria_nombre: p.categoria_id ? catById[p.categoria_id] : '',
+        variante_nombre: p.variante_id ? varById[p.variante_id] : '',
+        color_nombre: p.color_id ? colById[p.color_id] : '',
+        talla_etiqueta: p.talla_id ? talById[p.talla_id] : '',
       }));
+
+      // orden client-side si el campo es derivado
+      if (!serverSortable.includes(sortField)) {
+        const dir = sortOrder === 'asc' ? 1 : -1;
+        mapped = [...mapped].sort((a, b) => {
+          const av = (a as any)[sortField] ?? '';
+          const bv = (b as any)[sortField] ?? '';
+          return String(av).localeCompare(String(bv), 'es', { numeric: true }) * dir;
+        });
+      }
 
       startTransition(() => {
         setProducts(mapped);
@@ -178,55 +212,74 @@ export const StockManager = () => {
   };
 
   // carga inicial
-  useEffect(() => { loadLookups(); }, []);
+  // carga inicial separada (primero lookups, luego productos)
+useEffect(() => { loadLookups(); }, []);
 
-  useEffect(() => {
-    if (cats.length && vars.length && cols.length && tallas.length) {
-      fetchProducts();
-    }
-    const interval = setInterval(() => fetchProducts({ silent: true, keepSelection: true }), 100000);
-    return () => {
-      clearInterval(interval);
-      abortRef.current?.abort();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cats.length, vars.length, cols.length, tallas.length]);
+useEffect(() => {
+  if (cats.length && vars.length && cols.length && tallas.length) {
+    fetchProducts();
+  }
+  const interval = setInterval(() => fetchProducts({ silent: true, keepSelection: true }), 100000);
+  return () => {
+    clearInterval(interval);
+    abortRef.current?.abort();
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [cats.length, vars.length, cols.length, tallas.length]);
 
-  // refresca los nombres de categoría/variante/color/talla cuando llegan los lookups
-  useEffect(() => {
-    if (products.length === 0) return;
-    setProducts(prev =>
-      prev.map(p => ({
-        ...p,
-        categoria_nombre: p.categoria_id ? catById[p.categoria_id] : '',
-        variante_nombre:  p.variante_id  ? varById[p.variante_id]   : '',
-        color_nombre:     p.color_id     ? colById[p.color_id]      : '',
-        talla_etiqueta:   p.talla_id     ? talById[p.talla_id]      : '',
-      }))
-    );
-  }, [catById, varById, colById, talById]);
+// refresca los nombres de categoría/variante/color/talla cuando llegan los lookups
+useEffect(() => {
+  if (products.length === 0) return;
+  setProducts(prev =>
+    prev.map(p => ({
+      ...p,
+      categoria_nombre: p.categoria_id ? catById[p.categoria_id] : '',
+      variante_nombre:  p.variante_id  ? varById[p.variante_id]   : '',
+      color_nombre:     p.color_id     ? colById[p.color_id]      : '',
+      talla_etiqueta:   p.talla_id     ? talById[p.talla_id]      : '',
+    }))
+  );
+}, [catById, varById, colById, talById]);
 
 
-  // refetch en cambios de filtros
+  // refetch en cambios
   useEffect(() => { setPage(1); }, [categoryFilter, debouncedSearch, pageSize]);
-  useEffect(() => { fetchProducts({ silent: true }); }, [categoryFilter, debouncedSearch]); // eslint-disable-line
+  useEffect(() => { fetchProducts({ silent: true }); }, [sortField, sortOrder, page, pageSize, categoryFilter, debouncedSearch]); // eslint-disable-line
 
-  // util
+  // orden
+  const handleSort = (field: SortField) => {
+    const nextOrder: SortOrder = sortField === field && sortOrder === 'asc' ? 'desc' : 'asc';
+    setSortField(field);
+    setSortOrder(nextOrder);
+  };
+
+  // totales
+  const stockTotal = (p: Product) => (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0);
+
+  // util UI
   const formatPrice = (price: number) =>
     new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(price);
 
-  const getStockStatusClass = (stock: number) => {
-    if (stock < 5) return 'text-red-600';
-    if (stock < 10) return 'text-orange-600';
-    return 'text-green-700';
+  const getStockStatus = (stock: number) => {
+    if (stock < 10) return { color: 'text-red-600', bg: 'bg-red-50', label: 'Crítico' };
+    if (stock < 20) return { color: 'text-orange-600', bg: 'bg-orange-50', label: 'Bajo' };
+    return { color: 'text-green-700', bg: 'bg-green-50', label: 'Normal' };
   };
 
-  // selección por checkbox (a nivel item/sku)
+  // selección
   const toggleSelect = (id: number) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
   };
+  const allSelectedOnPage = useMemo(
+    () => products.length > 0 && selectedIds.length === products.length && products.every(p => selectedIds.includes(p.id)),
+    [products, selectedIds]
+  );
+  const toggleSelectAll = () => {
+    if (allSelectedOnPage) setSelectedIds([]);
+    else setSelectedIds(products.map((p) => p.id));
+  };
 
-  // eliminar (opcional)
+  // eliminar
   const deleteSelected = async () => {
     if (selectedIds.length === 0) return toast.error('No hay productos seleccionados.');
     if (!confirm(`¿Eliminar ${selectedIds.length} producto(s) en BD y Woo?`)) return;
@@ -237,6 +290,7 @@ export const StockManager = () => {
     const results = await Promise.allSettled(skus.map(sku => wooDeleteProductLocal(sku)));
     const okWoo = results.filter(r => r.status === 'fulfilled').length;
     const failWoo = results.length - okWoo;
+    if (failWoo > 0) console.warn('Woo delete falló en', failWoo, 'elementos', results);
 
     const { error } = await supabase.from('productos').delete().in('id', selectedIds);
     if (error) {
@@ -250,8 +304,11 @@ export const StockManager = () => {
     );
     toast.success(`Eliminados ${selectedIds.length} en BD. Woo: ${okWoo} ok / ${failWoo} fallo(s).`);
 
+    const remaining = totalRows - selectedIds.length;
+    const lastPage = Math.max(1, Math.ceil(remaining / pageSize));
     setSelectedIds([]);
-    fetchProducts({ silent: true });
+    if (page > lastPage) setPage(lastPage);
+    else fetchProducts({ silent: true });
   };
 
   // buscar SKU
@@ -286,7 +343,7 @@ export const StockManager = () => {
           stockweb: '',
           stockml:  '',
         });
-        toastAndLog(`SKU encontrado: ${data.name} — puedes editar nombre, precio y stock`, 'info');
+        toastAndLog(`SKU encontrado: ${data.name} — solo suma/resta de stock`, 'info');
       } else {
         setIsExistingSKU(false);
         setEditingProduct((prev: any) => ({
@@ -301,14 +358,6 @@ export const StockManager = () => {
       console.error('Error buscando SKU:', err);
       toastAndLog('Error al buscar SKU.', 'error');
     }
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [filtered, tallaById]);
-
-  const columnsForFam = (fam: FamRow) => {
-    const tallasFam = tallas.filter(t => t.tipo === fam.tipo);
-    return fam.tipo === 'numerica'
-      ? [...tallasFam].sort((a,b) => (a.orden ?? 0) - (b.orden ?? 0))
-      : [...tallasFam].sort((a,b) => ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta));
   };
 
   // guardar
@@ -326,8 +375,8 @@ export const StockManager = () => {
         const deltaWeb = toInt(editingProduct.stockweb);
         const deltaMl  = toInt(editingProduct.stockml);
 
-        if (deltaB2B === 0 && deltaWeb === 0 && deltaMl === 0 && !editingProduct?.name && !editingProduct?.price) {
-          return toast.error('No ingresaste cambios.');
+        if (deltaB2B === 0 && deltaWeb === 0 && deltaMl === 0) {
+          return toast.error('No ingresaste ningún cambio de stock.');
         }
 
         const nuevos = {
@@ -340,7 +389,6 @@ export const StockManager = () => {
           return toast.error('El stock no puede quedar negativo.');
         }
 
-        // 1) Actualiza stocks en BD
         let res;
         if (editingProduct?.id) {
           res = await supabase.from('productos').update(nuevos).eq('id', Number(editingProduct.id)).select().maybeSingle();
@@ -355,155 +403,70 @@ export const StockManager = () => {
         }
         if (!data) return toastAndLog('No se actualizó ninguna fila (SKU o ID no encontrado).', 'error');
 
-        // 2) Actualiza detalles + stock absoluto web en Woo (y refleja nombre/precio en BD si la función los toca también)
         try {
-          const currentName = (data?.name ?? '').trim();
-          const currentPrice = Number(data?.price ?? 0);
-
-          const desiredName = String(editingProduct?.name ?? currentName).trim();
-          const desiredPrice = toInt(editingProduct?.price ?? currentPrice);
-
-          const payload: {
-            skuLocal: string;
-            name?: string;
-            price?: number;
-            absoluteStockWeb?: number;
-          } = { skuLocal: String(editingProduct.sku) };
-
-          let hasChanges = false;
-
-          if (desiredName && desiredName !== currentName) {
-            payload.name = desiredName;
-            hasChanges = true;
-          }
-          if (Number.isFinite(desiredPrice) && desiredPrice !== currentPrice) {
-            payload.price = desiredPrice;
-            hasChanges = true;
-          }
-
-          // siempre mandamos el stock web absoluto para alinear Woo
-          payload.absoluteStockWeb = Number(nuevos.stockweb);
-          hasChanges = true;
-
-          if (hasChanges) {
-            await wooUpdateProductLocal(payload);
-          }
+          await wooPushStockLocal(String(editingProduct.sku), Number(nuevos.stockweb));
         } catch (e) {
-          console.error("Actualizar detalles en Woo/BD falló:", e);
-          toastAndLog("Stocks guardados en BD, pero el update de Woo falló.", "error");
+          console.error("WC push error:", e);
+          toastAndLog("Guardado en BD, pero falló la sync con Woo.", "error");
         }
 
-        const name = (editingProduct?.name || data.name || '(sin nombre)').toString();
+        const name = editingProduct?.name || data.name || '(sin nombre)';
         const sku  = editingProduct?.sku  || data.sku;
         const totalAntes   = origB2B + origWeb + origMl;
         const totalDespues = nuevos.stockb2b + nuevos.stockweb + nuevos.stockml;
 
         toastAndLog(
-          `Actualizado: ${name} (SKU ${sku}) • B2B ${origB2B}→${nuevos.stockb2b} | Web ${origWeb}→${nuevos.stockweb} | ML ${origMl}→${nuevos.stockml} • Total ${totalAntes}→${totalDespues}`,
+          `Stock actualizado: ${name} (SKU ${sku}) • B2B ${origB2B}→${nuevos.stockb2b} | Web ${origWeb}→${nuevos.stockweb} | ML ${origMl}→${nuevos.stockml} • Total ${totalAntes}→${totalDespues}`,
           'sync'
         );
       } else {
         // CREAR
-        const name = (editingProduct.name || '').toString().trim();
-        const price = toInt(editingProduct.price);
-        const categoria_id = Number(editingProduct.categoria_id || 0) || null;
-        const variante_id  = Number(editingProduct.variante_id  || 0) || null;
-        const color_id     = Number(editingProduct.color_id     || 0) || null;
-        const talla_id     = Number(editingProduct.talla_id     || 0) || null;
+          const name = (editingProduct.name || '').toString().trim();
+          const price = toInt(editingProduct.price);
+          const categoria_id = Number(editingProduct.categoria_id || 0) || null;
+          const variante_id  = Number(editingProduct.variante_id  || 0) || null;
+          const color_id     = Number(editingProduct.color_id     || 0) || null;
+          const talla_id     = Number(editingProduct.talla_id     || 0) || null;
 
-        // SKU SIEMPRE desde las opciones, no desde el input:
-        const sku = buildSku(categoria_id, variante_id, color_id, talla_id);
+          // SKU SIEMPRE desde las opciones, no desde el input:
+          const sku = buildSku(categoria_id, variante_id, color_id, talla_id);
 
-        if (!name || !price || !categoria_id || !variante_id || !color_id || !talla_id) {
-          return toast.error('Completa nombre, precio, categoría, variante, color y talla.');
+          if (!name || !price || !categoria_id || !variante_id || !color_id || !talla_id) {
+            return toast.error('Completa nombre, precio, categoría, variante, color y talla.');
+          }
+
+
+        const sB2B = Math.max(0, toInt(editingProduct.stockb2b));
+        const sWeb = Math.max(0, toInt(editingProduct.stockweb));
+        const sML  = Math.max(0, toInt(editingProduct.stockml));
+
+        const newProd = { name, sku, price, categoria_id, variante_id, color_id, talla_id, stockb2b: sB2B, stockweb: sWeb, stockml: sML };
+
+        const { error } = await supabase.from('productos').insert(newProd);
+        if (error) {
+          console.error('Error al crear producto:', error);
+          return toastAndLog(error.message || 'Error al crear producto.', 'error');
         }
 
-  // UPDATE existentes (incluye precio)
-  if (updates.length) {
-    const res = await Promise.allSettled(
-      updates.map(u =>
-        supabase.from('productos')
-          .update({ stockb2b: u.stockb2b, stockweb: u.stockweb, stockml: u.stockml, price: u.price })
-          .eq('id', u.id)
-      )
-    );
-    const failed = res.filter(r => r.status === 'rejected' || (r as any).value?.error).length;
-    if (failed) toastAndLog('Algunas tallas no pudieron actualizarse.', 'error');
-  }
+        try {
+          const resWoo = await wooCreateProductLocal({
+            skuLocal: sku,
+            name,
+            price,
+            initialStockWeb: sWeb,
+          });
+          await wooPushStockLocal(sku, sWeb);
+          toastAndLog(`Producto creado y sincronizado con Woo: ${name} (SKU Woo ${resWoo.skuWoo})`, 'sync');
+        } catch (e) {
+          console.error("Crear/Sync en Woo falló:", e);
+          toastAndLog("Producto creado en BD. No se pudo crear/actualizar en Woo.", "error");
+        }
 
-  // INSERT nuevos (BD genera SKU)
-  let createdRows: any[] = [];
-  if (creates.length) {
-    const { data, error } = await supabase.from('productos').insert(creates).select();
-    if (error) { console.error(error); toastAndLog('No se pudieron crear algunas tallas.', 'error'); }
-    else createdRows = data || [];
-  }
-
-  // Woo best-effort
-  try {
-    await Promise.allSettled(
-      updates.map(u => {
-        const p = products.find(pp => pp.id === u.id);
-        if (!p?.sku) return Promise.resolve();
-        return wooPushStockLocal(String(p.sku), Number(u.stockweb));
-      })
-    );
-    await Promise.allSettled(
-      createdRows.map(row =>
-        wooCreateProductLocal({
-          skuLocal: row.sku,
-          name: row.name,
-          price: Number(row.price),
-          initialStockWeb: Number(row.stockweb || 0),
-        }).then(() => wooPushStockLocal(String(row.sku), Number(row.stockweb || 0)))
-      )
-    );
-  } catch {}
-
-  const msg: string[] = [];
-  if (updates.length) msg.push(`Actualizadas ${updates.length}`);
-  if (creates.length) msg.push(`Creadas ${creates.length}`);
-  toastAndLog(msg.join(' · ') || 'Sin cambios', 'sync');
-}
-
- else {
-        // crear por matriz
-const name = (editingProduct?.name || '').toString().trim();
-const categoria_id = Number(editingProduct?.categoria_id || 0) || null;
-if (!name || !categoria_id) return toast.error('Completa nombre y categoría.');
-
-const matrix = editingProduct?.matrix || {};
-const rows = Object.entries(matrix).map(([tId, v]: any) => {
-  const b2b = Math.max(0, Number(v?.b2b || 0));
-  const web = Math.max(0, Number(v?.web || 0));
-  const ml  = Math.max(0, Number(v?.ml  || 0));
-  const total = b2b + web + ml;
-  if (total === 0) return null;
-  const price = Math.max(0, Number(v?.price || editingProduct?.basePrice || 0));
-  return { name, price, categoria_id, talla_id: Number(tId), stockb2b: b2b, stockweb: web, stockml: ml };
-}).filter(Boolean) as any[];
-
-if (!rows.length) return toast.error('Ingresa stock en al menos una talla.');
-
-const { data, error } = await supabase.from('productos').insert(rows).select();
-if (error || !data) { console.error(error); return toastAndLog('No se pudieron crear los productos.', 'error'); }
-
-// Woo best effort
-try {
-  await Promise.allSettled(
-    data.map((row:any) =>
-      wooCreateProductLocal({
-        skuLocal: row.sku,
-        name: row.name,
-        price: Number(row.price || 0),
-        initialStockWeb: Number(row.stockweb || 0),
-      }).then(() => wooPushStockLocal(String(row.sku), Number(row.stockweb || 0)))
-    )
-  );
-} catch {}
-
-toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
-
+        const total = sB2B + sWeb + sML;
+        toastAndLog(
+          `Producto creado: ${newProd.name} (SKU ${newProd.sku}) • B2B ${sB2B} | Web ${sWeb} | ML ${sML} • Total ${total}`,
+          'sync'
+        );
       }
     } catch (err) {
       console.error('Error en saveProduct:', err);
@@ -511,50 +474,54 @@ toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
     } finally {
       setShowModal(false);
       setEditingProduct(null);
-      setEditingFamily(null);
       setIsExistingSKU(false);
       fetchProducts({ silent: true });
     }
   };
 
-    const selectedCatName = useMemo(() => {
+  // helpers UI modal
+  const selectedCatName = useMemo(() => {
     const id = Number(editingProduct?.categoria_id || 0);
     return cats.find(c => c.id === id)?.name || '';
   }, [editingProduct?.categoria_id, cats]);
 
   const tallaOptions = useMemo(() => {
-    // Si quieres mantener la regla de que "Pantalones" usa numéricas:
     const esPantalon = selectedCatName.toLowerCase() === 'pantalones';
     return tallas
       .filter(t => esPantalon ? t.tipo === 'numerica' : t.tipo === 'alfanumerica')
       .sort((a,b) => {
-        if (a.tipo === 'numerica' && b.tipo === 'numerica') return (a.orden ?? 0) - (b.orden ?? 0);
-        return ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta);
+        // num: por valor_numerico; alfa: XS,S,M...
+        if (a.tipo === 'numerica' && b.tipo === 'numerica') {
+          return (a.orden ?? 0) - (b.orden ?? 0);
+        }
+        const order = ['XS','S','M','L','XL','XXL','3XL'];
+        return order.indexOf(a.etiqueta) - order.indexOf(b.etiqueta);
       });
   }, [tallas, selectedCatName]);
 
   // cuando cambian FKs, autoconstruir SKU si el usuario no lo tocó manualmente
   useEffect(() => {
-    if (!showModal || !editingProduct) return;
+  if (!showModal || !editingProduct) return;
 
-    // SKU solo auto para "agregar" (isExistingSKU === false)
-    if (!isExistingSKU) {
-      const autoSku = buildSku(
-        Number(editingProduct?.categoria_id || 0),
-        Number(editingProduct?.variante_id  || 0),
-        Number(editingProduct?.color_id     || 0),
-        Number(editingProduct?.talla_id     || 0),
-      );
-      setEditingProduct((prev: any) => ({ ...prev, sku: autoSku }));
-    }
-  }, [
-    showModal,
-    isExistingSKU,
-    editingProduct?.categoria_id,
-    editingProduct?.variante_id,
-    editingProduct?.color_id,
-    editingProduct?.talla_id,
-  ]);
+  // SKU solo auto para "agregar" (isExistingSKU === false)
+  if (!isExistingSKU) {
+    const autoSku = buildSku(
+      Number(editingProduct?.categoria_id || 0),
+      Number(editingProduct?.variante_id  || 0),
+      Number(editingProduct?.color_id     || 0),
+      Number(editingProduct?.talla_id     || 0),
+    );
+    setEditingProduct((prev: any) => ({ ...prev, sku: autoSku }));
+  }
+}, [
+  showModal,
+  isExistingSKU,
+  editingProduct?.categoria_id,
+  editingProduct?.variante_id,
+  editingProduct?.color_id,
+  editingProduct?.talla_id,
+]);
+
 
   // paginación
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
@@ -566,14 +533,6 @@ toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
   const goLast = () => setPage(totalPages);
 
   if (loading) return <div className="text-center py-12 text-neutral-500">Cargando datos...</div>;
-
-  // helpers UI
-  const channelBadge = (ch: Channel) =>
-    ch === 'B2B' ? 'bg-fuchsia-100 text-fuchsia-700'
-    : ch === 'Web' ? 'bg-blue-100 text-blue-700'
-    : 'bg-amber-100 text-amber-700';
-
-
 
   return (
     <div className="space-y-6">
@@ -611,13 +570,14 @@ toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
               name: '',
               price: '',
               categoria_id: '',
+              variante_id: '',
+              color_id: '',
               talla_id: '',
               stockb2b: '',
               stockweb: '',
               stockml: ''
             });
             setIsExistingSKU(false);
-            setEditingFamily(null);
             setShowModal(true);
           }} className="bg-green-600 text-white px-4 py-2 rounded flex items-center gap-2">
             <Plus size={16} /> Agregar
@@ -625,7 +585,7 @@ toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
         </div>
       </div>
 
-      {/* Acciones eliminar (opcional) */}
+      {/* Acciones eliminar */}
       {selectedIds.length > 0 && (
         <div>
           <button onClick={deleteSelected} className="bg-red-600 text-white px-4 py-2 rounded flex items-center gap-2">
@@ -634,164 +594,115 @@ toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
         </div>
       )}
 
-      {/* Tabla MATRIZ por familias */}
-      <div className="bg-white border rounded shadow overflow-x-auto text-[15px]">
+      {/* Tabla */}
+      <div className="bg-white border rounded shadow overflow-x-auto">
         <table className="w-full">
-          <thead>
-  <tr className="border-b bg-neutral-50">
-    <th className="text-left py-3 px-4 text-sm font-semibold">Nombre</th>
-    <th className="text-center py-3 px-4 text-sm font-semibold">
-      <div className="flex flex-col items-center">
-        <span>Matriz de tallas</span>
-        <span className="text-[11px] text-neutral-500 font-normal">(B2B / Web / ML)</span>
-      </div>
-    </th>
-    <th className="text-center py-3 px-4 text-sm font-semibold align-middle">Total</th>
-  </tr>
-</thead>
+          <thead className="bg-neutral-100">
+            <tr>
+              <th className="py-3 px-4 text-center">
+                <input
+                  type="checkbox"
+                  checked={allSelectedOnPage}
+                  onChange={toggleSelectAll}
+                />
+              </th>
+
+              {[
+                { label: 'Nombre', key: 'name' as SortField, align: 'text-left' },
+                { label: 'SKU', key: 'sku' as SortField, align: 'text-left' },
+                { label: 'Categoría', key: 'categoria_nombre' as SortField, align: 'text-center' },
+                { label: 'Variante', key: 'variante_nombre' as SortField, align: 'text-center' },       
+                { label: 'Talla', key: 'talla_etiqueta' as SortField, align: 'text-center' },
+                { label: 'Color', key: 'color_nombre' as SortField, align: 'text-center' },
+                { label: 'Precio', key: 'price' as SortField, align: 'text-center' },
+                { label: 'B2B', key: 'stockb2b' as SortField, align: 'text-center' },
+                { label: 'Web', key: 'stockweb' as SortField, align: 'text-center' },
+                { label: 'ML', key: 'stockml' as SortField, align: 'text-center' },
+              ].map(({ label, key, align }) => (
+                <th
+                  key={key}
+                  className={`py-3 px-4 ${align} cursor-pointer select-none`}
+                  onClick={() => handleSort(key)}
+                  title="Click para ordenar"
+                >
+                  <div className="inline-flex items-center gap-1">
+                    <span>{label}</span>
+                    {sortField === key && <span className="text-neutral-500">{sortOrder === 'asc' ? '▲' : '▼'}</span>}
+                  </div>
+                </th>
+              ))}
+
+              <th className="py-3 px-4 text-center">Total</th>
+              <th className="py-3 px-4 text-center">Editar</th>
+            </tr>
+          </thead>
 
           <tbody>
-            {pageFams.map((fam, idx) => {
-              const cols = columnsForFam(fam);
-              const totalFam = Object.values(fam.byTalla).reduce((acc, p) => acc + (p.stockb2b||0) + (p.stockweb||0) + (p.stockml||0), 0);
+            {products.map((p) => (
+              <tr key={p.id} className="border-b hover:bg-neutral-50">
+                <td className="text-center">
+                  <input type="checkbox" checked={selectedIds.includes(p.id)} onChange={() => toggleSelect(p.id)} />
+                </td>
 
-              return (
-                <tr key={idx} className="border-b align-top">
-                  {/* Nombre / categoría / tipo + ✏️ */}
-                  <td className="py-3 px-4 w-64">
-                    <div className="font-semibold">{fam.name}</div>
-                    <div className="text-xs text-neutral-500">{fam.categoria_id ? catById[fam.categoria_id] : ''}</div>
-                    <button
-                      onClick={() => openEditFamily(fam)}
-                      className="mt-2 inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm"
-                      title="Editar stocks de esta familia"
-                    >
-                      <Pencil size={16} /> Editar
-                    </button>
-                    <div>
-                      <button
-  onClick={async () => {
-    if (!confirm(`Eliminar "${fam.name}" y todas sus tallas? Esta acción no se puede deshacer.`)) return;
-    const items = Object.values(fam.byTalla);
-    const ids = items.map(p => p.id);
-    const skus = items.map(p => String(p.sku));
+                <td className="py-3 px-4">{p.name}</td>
+                <td className="py-3 px-4"><code className="bg-neutral-100 px-2 py-1 rounded">{p.sku}</code></td>
+                <td className="py-3 px-4 text-center">{p.categoria_nombre || '—'}</td>
+                <td className="py-3 px-4 text-center">{p.variante_nombre || '—'}</td>
+                <td className="py-3 px-4 text-center">{p.talla_etiqueta || '—'}</td>
+                <td className="py-3 px-4 text-center">{p.color_nombre || '—'}</td>
+                <td className="py-3 px-4 text-center">{formatPrice(Number(p.price))}</td>
 
-    // Woo (best-effort)
-    await Promise.allSettled(skus.map(s => wooDeleteProductLocal(s)));
+                <td className="py-3 px-4 text-center">
+                  {(() => { const s = getStockStatus(p.stockb2b ?? 0);
+                    return <span className={`${s.color} font-semibold`}>{p.stockb2b ?? 0} <span className="text-xs ml-1">({s.label})</span></span>;
+                  })()}
+                </td>
+                <td className="py-3 px-4 text-center">
+                  {(() => { const s = getStockStatus(p.stockweb ?? 0);
+                    return <span className={`${s.color} font-semibold`}>{p.stockweb ?? 0} <span className="text-xs ml-1">({s.label})</span></span>;
+                  })()}
+                </td>
+                <td className="py-3 px-4 text-center">
+                  {(() => { const s = getStockStatus(p.stockml ?? 0);
+                    return <span className={`${s.color} font-semibold`}>{p.stockml ?? 0} <span className="text-xs ml-1">({s.label})</span></span>;
+                  })()}
+                </td>
 
-    // BD
-    const { error } = await supabase.from('productos').delete().in('id', ids);
-    if (error) {
-      console.error(error);
-      toastAndLog('No se pudo eliminar el producto.', 'error');
-      return;
-    }
-    toastAndLog(`Producto "${fam.name}" eliminado (${ids.length} talla(s)).`, 'sync');
-    fetchProducts({ silent: true });
-  }}
-  className="mt-1 inline-flex items-center gap-2 text-red-600 hover:text-red-800 text-sm"
-  title="Eliminar este producto (todas sus tallas)"
->
-  Eliminar
-</button>
+                <td className="py-3 px-4 text-center font-semibold">{stockTotal(p)}</td>
 
-                    </div>
-                  </td>
-                  
-                  {/* Matriz (solo lectura) en Grid */}
-                  <td className="py-3 px-4">
-                    <div className="overflow-x-auto" style={{ minWidth: 360 }}>
-                      <div
-                        className="grid gap-y-2 gap-x-2 items-center"
-                        style={{ gridTemplateColumns: `120px repeat(${cols.length}, minmax(72px, 1fr))` }}
-                      >
-                        {/* encabezados tallas */}
-                        <div></div>
-                        {cols.map(t => (
-                          <div key={t.id} className="text-center text-lg text-neutral-700 font-medium">{t.etiqueta}</div>
-                        ))}
+                <td className="py-3 px-4 text-center">
+                  <button onClick={() => {
+                    setEditingProduct({
+                      ...p,
+                      _originalstockb2b: Number(p.stockb2b || 0),
+                      _originalstockweb: Number(p.stockweb || 0),
+                      _originalstockml:  Number(p.stockml  || 0),
+                      stockb2b: '',
+                      stockweb: '',
+                      stockml:  '',
+                    });
+                    setIsExistingSKU(true);
+                    setShowModal(true);
+                  }} className="text-blue-600 hover:text-blue-800">
+                    <Pencil size={16} />
+                  </button>
+                </td>
+              </tr>
+            ))}
 
-                        {/* filas por canal */}
-                        {/* B2B */}
-                        <div className="text-right pr-2">
-                          <span className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge('B2B')}`}>B2B</span>
-                        </div>
-                        {cols.map(t => {
-                          const p = fam.byTalla[t.id];
-                          const val = p?.stockb2b ?? 0;
-                          const cls = getStockStatusClass(val);
-                          return <div key={t.id} className="text-center"><span className={`font-semibold ${cls}`}>{val}</span></div>;
-                        })}
-
-                        {/* Web */}
-                        <div className="text-right pr-2">
-                          <span className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge('Web')}`}>Web</span>
-                        </div>
-                        {cols.map(t => {
-                          const p = fam.byTalla[t.id];
-                          const val = p?.stockweb ?? 0;
-                          const cls = getStockStatusClass(val);
-                          return <div key={t.id} className="text-center"><span className={`font-semibold ${cls}`}>{val}</span></div>;
-                        })}
-
-                        {/* ML */}
-                        <div className="text-right pr-2">
-                          <span className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge('ML')}`}>ML</span>
-                        </div>
-                        {cols.map(t => {
-                          const p = fam.byTalla[t.id];
-                          const val = p?.stockml ?? 0;
-                          const cls = getStockStatusClass(val);
-                          return <div key={t.id} className="text-center"><span className={`font-semibold ${cls}`}>{val}</span></div>;
-                        })}
-                        {/* TOTAL */}
-<div className="text-right pr-2">
-  <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">Total</span>
-</div>
-{cols.map(t => {
-  const p = fam.byTalla[t.id];
-  const total = (p?.stockb2b ?? 0) + (p?.stockweb ?? 0) + (p?.stockml ?? 0);
-  const cls = getStockStatusClass(total);
-  return <div key={t.id} className="text-center"><span className={`font-semibold ${cls}`}>{total}</span></div>;
-})}
-
-{/* PRECIO */}
-<div className="text-right pr-2">
-  <span className="px-2 py-1 rounded text-sm font-semibold bg-green-100 text-green-700">
-    Precio
-  </span>
-</div>
-{cols.map(t => {
-  const p = fam.byTalla[t.id];
-  const price = Number(p?.price ?? 0);
-  return <div key={t.id} className="text-center text-sm">{price ? formatPrice(price) : '—'}</div>;
-})}
-
-                      </div>
-                    </div>
-                  </td>
-
-                  <td className="py-4 px-4 text-center align-middle">
-  <div className="text-lg font-bold text-neutral-800">{totalFam}</div>
-</td>
-
-                </tr>
-              );
-            })}
-
-            {pageFams.length === 0 && (
+            {products.length === 0 && (
               <tr>
-                <td colSpan={3} className="text-center py-8 text-neutral-500">No se encontraron productos</td>
+                <td colSpan={12} className="text-center py-8 text-neutral-500">No se encontraron productos</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
 
-      {/* Paginación de familias */}
+      {/* Paginación */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div className="text-sm text-neutral-600">
-          Mostrando <strong>{showingFrom}</strong>–<strong>{showingTo}</strong> de <strong>{totalFamilies}</strong> familias
+          Mostrando <strong>{showingFrom}</strong>–<strong>{showingTo}</strong> de <strong>{totalRows}</strong> resultados
         </div>
 
         <div className="flex items-center gap-2">
@@ -827,13 +738,12 @@ toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
       {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-lg w-full max-w-4xl relative p-6">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-lg relative p-6">
             <button
               className="absolute top-3 right-3 text-neutral-500"
               onClick={() => {
                 setShowModal(false);
                 setEditingProduct(null);
-                setEditingFamily(null);
                 setIsExistingSKU(false);
               }}
             >
@@ -841,90 +751,47 @@ toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
             </button>
 
             <h3 className="text-lg font-semibold mb-3">
-              {isExistingSKU ? 'Actualizar producto' : 'Agregar producto nuevo'}
+              {isExistingSKU ? 'Actualizar stock por SKU' : 'Agregar producto nuevo'}
             </h3>
 
             {/* SKU */}
-            <div className="mb-3">
-              <label className="block text-sm text-neutral-600 mb-1">SKU</label>
+<div className="mb-3">
+  <label className="block text-sm text-neutral-600 mb-1">SKU</label>
 
-              {/* Agregar: SKU bloqueado y auto-generado */}
-              {!isExistingSKU && (
-                <input
-                  type="text"
-                  value={editingProduct?.sku || ''}
-                  readOnly
-                  className="w-full border rounded px-3 py-2 bg-neutral-100 text-neutral-700"
-                  title="El SKU se genera automáticamente según Categoría, Variante, Color y Talla"
-                />
-              )}
+  {/* Agregar: SKU bloqueado y auto-generado */}
+  {!isExistingSKU && (
+    <input
+      type="text"
+      value={editingProduct?.sku || ''}
+      readOnly
+      className="w-full border rounded px-3 py-2 bg-neutral-100 text-neutral-700"
+      title="El SKU se genera automáticamente según Categoría, Variante, Color y Talla"
+    />
+  )}
 
-              {/* Editar: SKU solo lectura */}
-              {isExistingSKU && (
-                <input
-                  type="text"
-                  value={editingProduct?.sku || ''}
-                  readOnly
-                  className="w-full border rounded px-3 py-2 bg-neutral-100 text-neutral-700"
-                />
-              )}
+  {/* Editar: SKU solo lectura */}
+  {isExistingSKU && (
+    <input
+      type="text"
+      value={editingProduct?.sku || ''}
+      readOnly
+      className="w-full border rounded px-3 py-2 bg-neutral-100 text-neutral-700"
+    />
+  )}
 
-              {!isExistingSKU && (
-                <p className="text-[11px] text-neutral-500 mt-1">
-                  Se genera como <code>SKU-XXYYZZTT</code> según tus selecciones.
-                </p>
-              )}
-            </div>
+  {!isExistingSKU && (
+    <p className="text-[11px] text-neutral-500 mt-1">
+      Se genera como <code>SKU-XXYYZZTT</code> según tus selecciones.
+    </p>
+  )}
+</div>
+
 
             {isExistingSKU ? (
               <>
-                {/* Nombre editable */}
-                <div className="mb-3">
-                  <label className="block text-sm text-neutral-600 mb-1">Nombre</label>
-                  <input
-                    type="text"
-                    value={editingProduct?.name || ''}
-                    onChange={(e) =>
-                      setEditingProduct((prev: any) => ({ ...prev, name: e.target.value }))
-                    }
-                    className="w-full border rounded px-3 py-2"
-                  />
-                </div>
+                <div className="mb-2 text-sm text-neutral-600"><strong>Nombre:</strong> {editingProduct?.name}</div>
+                <div className="mb-2 text-sm text-neutral-600"><strong>Precio:</strong> {formatPrice(Number(editingProduct?.price || 0))}</div>
 
-                {/* Precio editable */}
-                <div className="mb-3">
-                  <label className="block text-sm text-neutral-600 mb-1">Precio</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={
-                      editingProduct?.price === 0 || editingProduct?.price
-                        ? String(editingProduct.price)
-                        : ''
-                    }
-                    onBeforeInput={(e) => {
-                      const el = e.currentTarget as HTMLInputElement;
-                      const start = el.selectionStart ?? el.value.length;
-                      const end = el.selectionEnd ?? el.value.length;
-                      const data = (e as unknown as InputEvent).data ?? '';
-                      const proposed = el.value.slice(0, start) + data + el.value.slice(end);
-                      if (!/^\d*$/.test(proposed)) e.preventDefault();
-                    }}
-                    onPaste={(e) => {
-                      const t = e.clipboardData?.getData('text') ?? '';
-                      if (!/^\d*$/.test(t)) e.preventDefault();
-                    }}
-                    onChange={(e) =>
-                      setEditingProduct((prev: any) => ({
-                        ...prev,
-                        price: e.target.value.replace(/[^\d]/g, ''),
-                      }))
-                    }
-                    className="w-full border rounded px-3 py-2"
-                  />
-                </div>
-
-                {/* Deltas de stock */}
                 <div className="grid grid-cols-3 gap-3 mt-3">
                   {/* B2B */}
                   <div>
@@ -958,279 +825,255 @@ toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
                     />
                   </div>
 
-                <div className="mb-3 text-[11px] text-neutral-500">Edita el stock <strong>absoluto</strong> por talla y canal.</div>
+                  {/* Web */}
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                      Sumar a <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px]">Web</span>
+                    </label>
+                    <div className="text-xs text-neutral-500 mb-1">
+                      Actual: <strong>{editingProduct?._originalstockweb ?? 0}</strong>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editingProduct?.stockweb ?? ''}
+                      onBeforeInput={(e) => {
+                        const el = e.currentTarget;
+                        const start = el.selectionStart ?? el.value.length;
+                        const end = el.selectionEnd ?? el.value.length;
+                        const data = (e as any).data ?? '';
+                        const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                        if (!/^(-?\d*)$/.test(proposed)) e.preventDefault();
+                        if (data === '-' && start !== 0) e.preventDefault();
+                        if (data?.includes('-') && el.value.includes('-') && start === 0) e.preventDefault();
+                      }}
+                      onPaste={(e) => {
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        if (!/^(-?\d*)$/.test(paste)) e.preventDefault();
+                      }}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stockweb: e.target.value })}
+                      className="w-full border rounded px-2 py-2"
+                      placeholder="Ej: -1 o 3"
+                    />
+                  </div>
 
-                <div className="overflow-x-auto" style={{ minWidth: 480 }}>
-                  <div
-                    className="grid gap-y-2 gap-x-2 items-center"
-                    style={{ gridTemplateColumns: `120px repeat(${editingFamily.cols.length}, minmax(72px, 1fr))` }}
-                  >
-                    <div></div>
-                    {editingFamily.cols.map(t => (
-                      <div key={t.id} className="text-center text-xs text-neutral-700 font-medium">{t.etiqueta}</div>
-                    ))}
+                  {/* ML */}
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                      Sumar a <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px]">ML</span>
+                    </label>
+                    <div className="text-xs text-neutral-500 mb-1">
+                      Actual: <strong>{editingProduct?._originalstockml ?? 0}</strong>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editingProduct?.stockml ?? ''}
+                      onBeforeInput={(e) => {
+                        const el = e.currentTarget;
+                        const start = el.selectionStart ?? el.value.length;
+                        const end = el.selectionEnd ?? el.value.length;
+                        const data = (e as any).data ?? '';
+                        const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                        if (!/^(-?\d*)$/.test(proposed)) e.preventDefault();
+                        if (data === '-' && start !== 0) e.preventDefault();
+                        if (data?.includes('-') && el.value.includes('-') && start === 0) e.preventDefault();
+                      }}
+                      onPaste={(e) => {
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        if (!/^(-?\d*)$/.test(paste)) e.preventDefault();
+                      }}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stockml: e.target.value })}
+                      className="w-full border rounded px-2 py-2"
+                      placeholder="Ej: -3 o 2"
+                    />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Crear producto */}
+                <div className="mb-3">
+                  <label className="block text-sm text-neutral-600 mb-1">Nombre</label>
+                  <input
+                    type="text"
+                    value={editingProduct?.name || ''}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
+                    className="w-full border rounded px-3 py-2"
+                  />
+                </div>
 
-                    {(['B2B','Web','ML'] as const).map((label) => (
-                      <div className="contents" key={label}>
-                        <div className="text-right pr-2">
-                          <span className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge(label)}`}>{label}</span>
-                        </div>
-                        {editingFamily.cols.map(t => {
-                          const v = editingFamily.values[t.id];
-                          const field = label === 'B2B' ? 'b2b' : label === 'Web' ? 'web' : 'ml';
-                          const value = (v as any)?.[field] ?? 0;
-                          const disabled = !v?.id; // no existe ese SKU (talla)
-                          return (
-                            <div key={t.id} className="text-center">
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                className="w-full border rounded px-2 py-1 text-center"
-                                value={disabled ? '' : String(value)}
-                                placeholder={disabled ? '—' : '0'}
-                                disabled={disabled}
-                                onBeforeInput={(e) => {
-                                  const el = e.currentTarget;
-                                  const start = el.selectionStart ?? el.value.length;
-                                  const end = el.selectionEnd ?? el.value.length;
-                                  const data = (e as any).data ?? '';
-                                  const proposed = el.value.slice(0, start) + data + el.value.slice(end);
-                                  if (!/^\d*$/.test(proposed)) e.preventDefault();
-                                }}
-                                onPaste={(e) => {
-                                  const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
-                                  if (!/^\d*$/.test(paste)) e.preventDefault();
-                                }}
-                                onChange={(e) => {
-                                  const n = e.target.value === '' ? 0 : Number(e.target.value.replace(/[^\d]/g, ''));
-                                  setEditingFamily(prev => {
-                                    if (!prev) return prev;
-                                    const cur = prev.values[t.id] || { b2b: 0, web: 0, ml: 0 };
-                                    return {
-                                      ...prev,
-                                      values: { ...prev.values, [t.id]: { ...cur, [field]: n } }
-                                    };
-                                  });
-                                }}
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ))}
-                    {/* TOTAL (solo lectura) */}
-<div className="text-right pr-2">
-  <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">Total</span>
-</div>
-{editingFamily.cols.map(t => {
-  const v = editingFamily.values[t.id];
-  const total = (v?.b2b ?? 0) + (v?.web ?? 0) + (v?.ml ?? 0);
-  const cls = getStockStatusClass(total);
-  return <div key={t.id} className="text-center"><span className={`font-semibold ${cls}`}>{total}</span></div>;
-})}
+                <div className="mb-3">
+                  <label className="block text-sm text-neutral-600 mb-1">Precio</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={editingProduct?.price ?? ''}
+                    onBeforeInput={(e) => {
+                      const el = e.currentTarget;
+                      const start = el.selectionStart ?? el.value.length;
+                      const end = el.selectionEnd ?? el.value.length;
+                      const data = (e as any).data ?? '';
+                      const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                      if (!/^\d*$/.test(proposed)) e.preventDefault();
+                    }}
+                    onPaste={(e) => {
+                      const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                      if (!/^\d*$/.test(paste)) e.preventDefault();
+                    }}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, price: e.target.value })}
+                    className="w-full border rounded px-3 py-2"
+                  />
+                </div>
 
-{/* PRECIO (editable siempre) */}
-<div className="text-right pr-2">
-  <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">Precio</span>
-</div>
-{editingFamily.cols.map(t => {
-  const v = editingFamily.values[t.id];
-  const value = Number(v?.price ?? editingFamily.basePrice ?? 0);
-  return (
-    <div key={t.id} className="text-center">
-      <input
-        type="text"
-        inputMode="numeric"
-        className="w-full border rounded px-2 py-1 text-center"
-        value={String(value || 0)}
-        onBeforeInput={(e) => {
-          const el = e.currentTarget;
-          const start = el.selectionStart ?? el.value.length;
-          const end = el.selectionEnd ?? el.value.length;
-          const data = (e as any).data ?? '';
-          const proposed = el.value.slice(0, start) + data + el.value.slice(end);
-          if (!/^\d*$/.test(proposed)) e.preventDefault();
-        }}
-        onPaste={(e) => {
-          const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
-          if (!/^\d*$/.test(paste)) e.preventDefault();
-        }}
-        onChange={(e) => {
-          const n = Number((e.target.value || '0').replace(/[^\d]/g, ''));
-          setEditingFamily(prev => {
-            if (!prev) return prev;
-            const cur = prev.values[t.id] || { b2b:0, web:0, ml:0, price:0 };
-            return { ...prev, values: { ...prev.values, [t.id]: { ...cur, price: n } } };
-          });
-        }}
-      />
-    </div>
-  );
-})}
+                {/* Dropdowns normalizados */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm text-neutral-600 mb-1">Categoría</label>
+                    <select
+                      value={editingProduct?.categoria_id ?? ''}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, categoria_id: e.target.value ? Number(e.target.value) : '' })}
+                      className="w-full border rounded px-3 py-2"
+                    >
+                      <option value="">Seleccionar categoría</option>
+                      {cats.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                    </select>
+                  </div>
 
+                  <div>
+                    <label className="block text-sm text-neutral-600 mb-1">Variante</label>
+                    <select
+                      value={editingProduct?.variante_id ?? ''}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, variante_id: e.target.value ? Number(e.target.value) : '' })}
+                      className="w-full border rounded px-3 py-2"
+                    >
+                      <option value="">Seleccionar variante</option>
+                      {vars.map((v) => (<option key={v.id} value={v.id}>{v.name}</option>))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-neutral-600 mb-1">Color</label>
+                    <select
+                      value={editingProduct?.color_id ?? ''}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, color_id: e.target.value ? Number(e.target.value) : '' })}
+                      className="w-full border rounded px-3 py-2"
+                    >
+                      <option value="">Seleccionar color</option>
+                      {cols.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-neutral-600 mb-1">Talla</label>
+                    <select
+                      value={editingProduct?.talla_id ?? ''}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, talla_id: e.target.value ? Number(e.target.value) : '' })}
+                      className="w-full border rounded px-3 py-2"
+                      disabled={!editingProduct?.categoria_id}
+                    >
+                      <option value="">{editingProduct?.categoria_id ? 'Seleccionar talla' : 'Selecciona categoría primero'}</option>
+                      {tallaOptions.map(t => (<option key={t.id} value={t.id}>{t.etiqueta}</option>))}
+                    </select>
+                    <p className="text-[11px] text-neutral-500 mt-1">
+                      {selectedCatName.toLowerCase() === 'pantalones'
+                        ? 'Mostrando tallas numéricas'
+                        : 'Mostrando tallas alfanuméricas'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Stocks iniciales */}
+                <div className="grid grid-cols-3 gap-3 mt-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                      Stock inicial <span className="px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 text-[10px]">B2B</span>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editingProduct?.stockb2b ?? ''}
+                      onBeforeInput={(e) => {
+                        const el = e.currentTarget;
+                        const start = el.selectionStart ?? el.value.length;
+                        const end = el.selectionEnd ?? el.value.length;
+                        const data = (e as any).data ?? '';
+                        const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                        if (!/^\d*$/.test(proposed)) e.preventDefault();
+                      }}
+                      onPaste={(e) => {
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        if (!/^\d*$/.test(paste)) e.preventDefault();
+                      }}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stockb2b: e.target.value })}
+                      className="w-full border rounded px-2 py-2"
+                      placeholder="0"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                      Stock inicial <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px]">Web</span>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editingProduct?.stockweb ?? ''}
+                      onBeforeInput={(e) => {
+                        const el = e.currentTarget;
+                        const start = el.selectionStart ?? el.value.length;
+                        const end = el.selectionEnd ?? el.value.length;
+                        const data = (e as any).data ?? '';
+                        const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                        if (!/^\d*$/.test(proposed)) e.preventDefault();
+                      }}
+                      onPaste={(e) => {
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        if (!/^\d*$/.test(paste)) e.preventDefault();
+                      }}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stockweb: e.target.value })}
+                      className="w-full border rounded px-2 py-2"
+                      placeholder="0"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                      Stock inicial <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px]">ML</span>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editingProduct?.stockml ?? ''}
+                      onBeforeInput={(e) => {
+                        const el = e.currentTarget;
+                        const start = el.selectionStart ?? el.value.length;
+                        const end = el.selectionEnd ?? el.value.length;
+                        const data = (e as any).data ?? '';
+                        const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                        if (!/^\d*$/.test(proposed)) e.preventDefault();
+                      }}
+                      onPaste={(e) => {
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        if (!/^\d*$/.test(paste)) e.preventDefault();
+                      }}
+                      onChange={(e) => setEditingProduct({ ...editingProduct, stockml: e.target.value })}
+                      className="w-full border rounded px-2 py-2"
+                      placeholder="0"
+                    />
                   </div>
                 </div>
               </>
             )}
 
-            {/* MODO CREAR */}
-            {!isExistingSKU && (
-  <>
-    <div className="grid grid-cols-2 gap-3">
-      <div>
-        <label className="block text-sm text-neutral-600 mb-1">Nombre</label>
-        <input
-          type="text"
-          value={editingProduct?.name || ''}
-          onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
-          className="w-full border rounded px-3 py-2"
-        />
-      </div>
-      <div>
-        <label className="block text-sm text-neutral-600 mb-1">Categoría</label>
-        <select
-          value={editingProduct?.categoria_id ?? ''}
-          onChange={(e) => setEditingProduct({ ...editingProduct, categoria_id: e.target.value ? Number(e.target.value) : '' })}
-          className="w-full border rounded px-3 py-2"
-        >
-          <option value="">Seleccionar categoría</option>
-          {cats.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
-        </select>
-      </div>
-    </div>
-
-    <div className="mt-3">
-      <label className="block text-sm text-neutral-600 mb-1">Precio base</label>
-      <input
-        type="text"
-        inputMode="numeric"
-        className="border rounded px-3 py-2 w-40"
-        value={String(editingProduct?.basePrice ?? 0)}
-        onBeforeInput={(e) => {
-          const el = e.currentTarget; const s = el.selectionStart ?? el.value.length; const en = el.selectionEnd ?? el.value.length;
-          const d = (e as any).data ?? ''; const p = el.value.slice(0, s) + d + el.value.slice(en);
-          if (!/^\d*$/.test(p)) e.preventDefault();
-        }}
-        onPaste={(e) => { const t = (e.clipboardData || (window as any).clipboardData).getData('text'); if (!/^\d*$/.test(t)) e.preventDefault(); }}
-        onChange={(e) => setEditingProduct({ ...editingProduct, basePrice: Number(e.target.value || 0) })}
-      />
-    </div>
-
-    {/* MATRIZ CREAR */}
-    <div className="mt-4 overflow-x-auto" style={{ minWidth: 480 }}>
-      {(() => {
-        const catName = cats.find(c => c.id === Number(editingProduct?.categoria_id))?.name?.toLowerCase() || '';
-        const tipo: 'alfanumerica' | 'numerica' = catName === 'pantalones' ? 'numerica' : 'alfanumerica';
-        const cols = tallas
-          .filter(t => t.tipo === tipo)
-          .sort((a,b) => tipo === 'numerica'
-            ? (a.orden ?? 0) - (b.orden ?? 0)
-            : ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta));
-
-        // estado local de la matriz de creación
-        if (!editingProduct?.matrix) {
-          const init: Record<number, { b2b:number; web:number; ml:number; price:number }> = {};
-          cols.forEach(t => { init[t.id] = { b2b:0, web:0, ml:0, price: Number(editingProduct?.basePrice || 0) }; });
-          setEditingProduct((p:any) => ({ ...p, matrix: init }));
-        }
-
-        const setVal = (tId:number, field:'b2b'|'web'|'ml'|'price', val:string) => {
-          const n = Number((val || '0').replace(/[^\d]/g, ''));
-          setEditingProduct((p:any) => ({ ...p, matrix: { ...p.matrix, [tId]: { ...p.matrix[tId], [field]: n } } }));
-        };
-
-        const gridTemplateColumns = `120px repeat(${cols.length}, minmax(72px, 1fr))`;
-
-        return (
-          <div className="grid gap-y-2 gap-x-2 items-center" style={{ gridTemplateColumns }}>
-            <div></div>
-            {cols.map(t => (
-              <div key={t.id} className="text-center text-xs text-neutral-700 font-medium">{t.etiqueta}</div>
-            ))}
-
-            {/* B2B */}
-            <div className="text-right pr-2">
-              <span className="px-2 py-1 rounded text-xs font-semibold bg-fuchsia-100 text-fuchsia-700">B2B</span>
-            </div>
-            {cols.map(t => (
-              <div key={t.id} className="text-center">
-                <input type="text" inputMode="numeric" className="w-full border rounded px-2 py-1 text-center"
-                  value={String(editingProduct?.matrix?.[t.id]?.b2b ?? 0)}
-                  onBeforeInput={(e)=>{const el=e.currentTarget;const s=el.selectionStart??el.value.length;const en=el.selectionEnd??el.value.length;const d=(e as any).data??'';const p=el.value.slice(0,s)+d+el.value.slice(en);if(!/^\d*$/.test(p)) e.preventDefault();}}
-                  onPaste={(e)=>{const t=(e.clipboardData||(window as any).clipboardData).getData('text');if(!/^\d*$/.test(t)) e.preventDefault();}}
-                  onChange={(e)=>setVal(t.id,'b2b',e.target.value)} />
-              </div>
-            ))}
-
-            {/* Web */}
-            <div className="text-right pr-2">
-              <span className="px-2 py-1 rounded text-xs font-semibold bg-blue-100 text-blue-700">Web</span>
-            </div>
-            {cols.map(t => (
-              <div key={t.id} className="text-center">
-                <input type="text" inputMode="numeric" className="w-full border rounded px-2 py-1 text-center"
-                  value={String(editingProduct?.matrix?.[t.id]?.web ?? 0)}
-                  onBeforeInput={(e)=>{const el=e.currentTarget;const s=el.selectionStart??el.value.length;const en=el.selectionEnd??el.value.length;const d=(e as any).data??'';const p=el.value.slice(0,s)+d+el.value.slice(en);if(!/^\d*$/.test(p)) e.preventDefault();}}
-                  onPaste={(e)=>{const t=(e.clipboardData||(window as any).clipboardData).getData('text');if(!/^\d*$/.test(t)) e.preventDefault();}}
-                  onChange={(e)=>setVal(t.id,'web',e.target.value)} />
-              </div>
-            ))}
-
-            {/* ML */}
-            <div className="text-right pr-2">
-              <span className="px-2 py-1 rounded text-xs font-semibold bg-amber-100 text-amber-700">ML</span>
-            </div>
-            {cols.map(t => (
-              <div key={t.id} className="text-center">
-                <input type="text" inputMode="numeric" className="w-full border rounded px-2 py-1 text-center"
-                  value={String(editingProduct?.matrix?.[t.id]?.ml ?? 0)}
-                  onBeforeInput={(e)=>{const el=e.currentTarget;const s=el.selectionStart??el.value.length;const en=el.selectionEnd??el.value.length;const d=(e as any).data??'';const p=el.value.slice(0,s)+d+el.value.slice(en);if(!/^\d*$/.test(p)) e.preventDefault();}}
-                  onPaste={(e)=>{const t=(e.clipboardData||(window as any).clipboardData).getData('text');if(!/^\d*$/.test(t)) e.preventDefault();}}
-                  onChange={(e)=>setVal(t.id,'ml',e.target.value)} />
-              </div>
-            ))}
-
-            {/* TOTAL (solo lectura) */}
-            <div className="text-right pr-2">
-              <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">Total</span>
-            </div>
-            {cols.map(t => {
-              const v = editingProduct?.matrix?.[t.id] || {b2b:0,web:0,ml:0};
-              const total = (v.b2b||0)+(v.web||0)+(v.ml||0);
-              const cls = getStockStatusClass(total);
-              return <div key={t.id} className="text-center"><span className={`font-semibold ${cls}`}>{total}</span></div>;
-            })}
-
-            {/* PRECIO */}
-            <div className="text-right pr-2">
-              <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">Precio</span>
-            </div>
-            {cols.map(t => (
-              <div key={t.id} className="text-center">
-                <input type="text" inputMode="numeric" className="w-full border rounded px-2 py-1 text-center"
-                  value={String(editingProduct?.matrix?.[t.id]?.price ?? editingProduct?.basePrice ?? 0)}
-                  onBeforeInput={(e)=>{const el=e.currentTarget;const s=el.selectionStart??el.value.length;const en=el.selectionEnd??el.value.length;const d=(e as any).data??'';const p=el.value.slice(0,s)+d+el.value.slice(en);if(!/^\d*$/.test(p)) e.preventDefault();}}
-                  onPaste={(e)=>{const t=(e.clipboardData||(window as any).clipboardData).getData('text');if(!/^\d*$/.test(t)) e.preventDefault();}}
-                  onChange={(e)=>setVal(t.id,'price',e.target.value)} />
-              </div>
-            ))}
-          </div>
-        );
-      })()}
-    </div>
-  </>
-)}
-
-
             <div className="mt-4 flex gap-2">
               <button onClick={saveProduct} className="bg-green-600 text-white px-4 py-2 rounded">
-                {isExistingSKU ? 'Guardar cambios' : 'Guardar producto'}
+                {isExistingSKU ? 'Actualizar stock' : 'Guardar producto'}
               </button>
               <button
                 onClick={() => {
                   setShowModal(false);
                   setEditingProduct(null);
-                  setEditingFamily(null);
                   setIsExistingSKU(false);
                 }}
                 className="border px-4 py-2 rounded"
