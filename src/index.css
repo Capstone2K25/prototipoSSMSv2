@@ -9,3 +9,57 @@
     font-family: 'Inter', system-ui, sans-serif;
   }
 }
+
+/* Fondo patrón diagonal con logo + textura de tela (sobre fondo blanco) */
+.pattern-mosaic {
+  position: relative;
+  background-color: #fff;           /* fondo blanco visible siempre */
+}
+
+/* Capa 1: logos en diagonal, grandes y separados */
+.pattern-mosaic::before {
+  content: "";
+  position: absolute;
+  inset: -12%;                      /* sangrado para cubrir cuando rotamos */
+  transform: rotate(-30deg) scale(1.05);  /* DIAGONAL real del patrón */
+  transform-origin: center;
+
+  /* dos capas del mismo logo; la segunda se corre media celda */
+  background-image: url("/img/oldtree-logo.png"), url("/img/oldtree-logo.png");
+  /* "space" añade separación entre repeticiones sin deformar el logo */
+  background-repeat: space, space;
+
+  /* tamaño del logo (ajusta a gusto) */
+  background-size: 500px auto, 500px auto;
+
+  /* corrimiento = mitad del size para el efecto “ladrillo” diagonal */
+  background-position: 0 0, 95px 95px;
+
+  opacity: 0.10;                    /* intensidad del logo sobre blanco */
+  filter: grayscale(1);             /* deja el logo en monocromo suave */
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Capa 2: textura tipo tela sutil */
+.pattern-mosaic::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+
+  /* rejilla fina + puntillado para sensación de fibra */
+  background-image:
+    repeating-linear-gradient(0deg,  rgba(0,0,0,0.03) 0 1px, transparent 1px 5px),
+    repeating-linear-gradient(90deg, rgba(0,0,0,0.03) 0 1px, transparent 1px 5px),
+    radial-gradient(circle at 1px 1px, rgba(0,0,0,0.025) 1px, transparent 1.6px);
+  background-blend-mode: multiply;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* El contenido de la app siempre por encima de las capas del fondo */
+.pattern-mosaic > * {
+  position: relative;
+  z-index: 1;
+}
+

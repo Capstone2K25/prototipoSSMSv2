@@ -90,21 +90,25 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
   const handleLogout = () => {
     onLogout()
   }
-
   return (
-    <div className="min-h-screen bg-neutral-50">
+    
+    <div className="min-h-screen bg-white pattern-mosaic">
       {/* NAVBAR */}
       <nav className="bg-neutral-900 text-white shadow-lg border-b border-neutral-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             {/* LOGO */}
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-green-700 to-green-900 rounded-lg flex items-center justify-center font-bold text-lg shadow-lg">
-                OT
+              <div className="w-30 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden ring-1 ring-black/10 dark:ring-white/10 shadow-lg">
+                <img
+                  src="/img/oldtree-logo.png"
+                  alt="OldTree"
+                  className="w-[85%] h-[85%] object-contain"
+                />
               </div>
+
               <div>
-                <h1 className="text-xl font-bold tracking-tight">OldTree</h1>
-                <p className="text-xs text-neutral-400">Stock Manager</p>
+                <h1 className="text-xl font-bold tracking-tight">Stock Manager</h1>
               </div>
             </div>
 
@@ -124,7 +128,7 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
                   onClick={() => handleTabChange(tab.id)}
                   className={`relative flex items-center space-x-2 px-4 py-2 rounded-lg transition-all ${
                     activeTab === tab.id
-                      ? 'bg-green-700 text-white shadow-lg'
+                         ? 'bg-white text-black shadow-lg ring-1 ring-black/10'
                       : 'text-neutral-300 hover:bg-neutral-800 hover:text-white'
                   }`}
                 >
@@ -159,7 +163,7 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
                   onClick={() => handleTabChange(tab.id)}
                   className={`relative w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${
                     activeTab === tab.id
-                      ? 'bg-green-700 text-white'
+                      ? 'bg-white text-black ring-1 ring-black/10'
                       : 'text-neutral-300 hover:bg-neutral-800'
                   }`}
                 >
