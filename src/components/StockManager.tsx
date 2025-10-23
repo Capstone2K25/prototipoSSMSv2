@@ -1053,4 +1053,3 @@ toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
     </div>
   );
 };
-
