@@ -264,19 +264,18 @@ export const Admin = ({ user }: AdminProps) => {
   };
 
   const disconnectMl = async () => {
-    if (!confirm('¿Desconectar Mercado Libre? Se eliminarán las credenciales guardadas.')) return;
-    try {
-      await supabase.from('ml_credentials').delete().eq('id', CREDS_ID);
-      setMlCreds(null);
-      setMlForm({ access_token: '', refresh_token: '', expires_at: '' });
-      emitAlert({ type: 'error', message: 'Mercado Libre desconectado', channel: 'ml' });
-    } catch (e: any) {
-      emitAlert({ type: 'error', message: `No se pudo desconectar: ${e.message || e}`, channel: 'ml' });
-    } finally {
-      await fetchHealth();  // fuerza estado real
-      await loadMlCreds();
-    }
-  };
+    if (!confirm('¿Desconectar Mercado Libre? Se eliminarán las credenciales.')) return;
+  setSaving(true);
+  try {
+    const { data, error } = await supabase.functions.invoke('meli-disconnect', { method: 'POST' });
+    if (error || data?.error) throw new Error(error?.message ?? data?.error ?? 'Fallo al desconectar');
+    await fetchHealth(); // refresca estado
+  } catch (e:any) {
+    alert(e.message ?? 'Error');
+  } finally {
+    setSaving(false);
+  }
+};
 
   const startMeliOAuth = async () => {
     try {
