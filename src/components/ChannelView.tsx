@@ -1,5 +1,5 @@
 // src/components/ChannelView.tsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Globe,
   ShoppingCart,
@@ -28,10 +28,10 @@ type Product = {
   stockb2b: number;
   stockweb: number;
   stockml: number;
-  talla_id: number | null;
-  talla_etiqueta: string | null;
-  talla_tipo: 'alfanumerica' | 'numerica' | null;
+  talla_id?: number | null; // 👈 solo guardamos la referencia a la talla
 };
+
+type CategoryOption = { id: string; name: string; domain_name?: string };
 
 type MLLink = {
   sku: string;
@@ -77,6 +77,9 @@ type FamRow = {
 const ALFA_ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
 
 export const ChannelView = ({ channel }: ChannelViewProps) => {
+
+  
+
   const [products, setProducts] = useState<Product[]>([]);
   const [tallas, setTallas] = useState<LookupTal[]>([]);
   const [mlLinks, setMlLinks] = useState<Record<string, MLLink[]>>({});
@@ -86,6 +89,8 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   const [syncing, setSyncing] = useState(false);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [lastSync, setLastSync] = useState(new Date());
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounter = useRef(0);
 
   // Modal de publicación
   const [showPreview, setShowPreview] = useState(false);
@@ -93,12 +98,17 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   const [draftError, setDraftError] = useState<string | null>(null);
   const [draftSending, setDraftSending] = useState(false);
 
+  // Estados de talla / size grid (requeridos por ML Moda)
+  const [sizeGridId, setSizeGridId] = useState<string>('');
+  const [sizeGridRowId, setSizeGridRowId] = useState<string>('');
+  const [sizeValue, setSizeValue] = useState<string>('');
+
   // Cat. ML buscador
-  const [catQuery, setCatQuery] = useState('');
-  const [catOpts, setCatOpts] = useState<Array<{category_id:string; category_name:string; domain_name:string}>>([]);
-  const [catLoading, setCatLoading] = useState(false);
-  const [draftCatName, setDraftCatName] = useState<string>('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+const [catQuery, setCatQuery] = useState('');
+const [catOpts, setCatOpts] = useState<CategoryOption[]>([]);
+const [catLoading, setCatLoading] = useState(false);
+const [draftCatName, setDraftCatName] = useState<string>(''); // etiqueta mostrada
+
 
   // ------- Config -------
   const channelConfig = {
@@ -161,12 +171,8 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     // Traemos cada SKU con su talla para poder agrupar por familia
     const { data, error } = await supabase
       .from('productos')
-      .select(`
-        id, name, sku, price, stockb2b, stockweb, stockml, categoria_id,
-        categorias(nombre_categoria),
-        tallas: talla_id ( id_talla, etiqueta, tipo )
-      `)
-      .gt('stockml', 0) // mostramos sólo los que tienen ML > 0 (ajústalo si quieres ver todos)
+      .select('id, name, sku, price, stockb2b, stockweb, stockml, categoria_id, categorias(nombre_categoria), talla_id')
+      .gt('stockml', 0)
       .order('id', { ascending: true });
 
     if (error) {
@@ -186,9 +192,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
         stockb2b: Number(p.stockb2b) || 0,
         stockweb: Number(p.stockweb) || 0,
         stockml: Number(p.stockml) || 0,
-        talla_id: p.tallas?.id_talla ?? null,
-        talla_etiqueta: p.tallas?.etiqueta ?? null,
-        talla_tipo: p.tallas?.tipo ?? null,
+        talla_id: p.talla_id ?? null,
       }))
     );
   }
@@ -232,24 +236,38 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
 
   // Buscar categorías de ML (debounce)
   useEffect(() => {
-    const q = catQuery.trim();
-    if (!showPreview) return;
-    if (!q) {
-      setCatOpts([]);
-      return;
+  const q = catQuery.trim();
+  if (!showPreview) return;
+
+  if (!q || q.length < 2) { // evita ruido
+    setCatOpts([]);
+    return;
+  }
+
+  const t = setTimeout(async () => {
+    try {
+      setCatLoading(true);
+      const { data, error } = await supabase.functions.invoke('meli-categories', { body: { q } });
+
+      // Admite distintos formatos de respuesta
+      const raw = (data?.results || data?.categories || []) as any[];
+      const opts: CategoryOption[] = raw
+        .map((r: any) => ({
+          id: r.category_id || r.id,
+          name: r.category_name || r.name,
+          domain_name: r.domain_name || r.path?.[0]?.name || '',
+        }))
+        .filter(o => typeof o.id === 'string' && o.id.startsWith('ML'));
+
+      if (!error) setCatOpts(opts);
+      else setCatOpts([]);
+    } finally {
+      setCatLoading(false);
     }
-    const t = setTimeout(async () => {
-      try {
-        setCatLoading(true);
-        const { data, error } = await supabase.functions.invoke('meli-categories', { body: { q } });
-        if (!error && data?.ok) setCatOpts(data.results || []);
-        else setCatOpts([]);
-      } finally {
-        setCatLoading(false);
-      }
-    }, 300);
-    return () => clearTimeout(t);
-  }, [catQuery, showPreview]);
+  }, 300);
+
+  return () => clearTimeout(t);
+}, [catQuery, showPreview]);
 
   useEffect(() => {
     (async () => {
@@ -261,6 +279,22 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     return () => clearInterval(interval);
   }, []);
 
+  // Bloqueo global de drag mientras está abierto el modal
+  useEffect(() => {
+    const prevent = (e: any) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    if (showPreview) {
+      window.addEventListener('dragover', prevent);
+      window.addEventListener('drop', prevent);
+    }
+    return () => {
+      window.removeEventListener('dragover', prevent);
+      window.removeEventListener('drop', prevent);
+    };
+  }, [showPreview]);
+
   // ---------- Derivados ----------
   const key = config.stockKey;
 
@@ -270,14 +304,21 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   const firstActiveItemId = (sku: string) =>
     (mlLinks[sku] || []).find((l) => l.meli_status === 'active' || l.meli_status === 'paused')?.meli_item_id || null;
 
-  // Armar familias
+  // Armar familias (resolvemos tipo de talla mirando la tabla 'tallas')
+  const tallasById = useMemo(() => {
+    const m = new Map<number, LookupTal>();
+    for (const t of tallas) m.set(t.id, t);
+    return m;
+  }, [tallas]);
+
   const fams: FamRow[] = useMemo(() => {
     const map = new Map<string, FamRow>();
     for (const p of products) {
-      const tipo = (p.talla_tipo || 'alfanumerica') as 'alfanumerica' | 'numerica';
-      const key = `${p.name}::${p.categoria_id ?? 0}::${tipo}`;
-      if (!map.has(key)) {
-        map.set(key, {
+      const tipo: 'alfanumerica' | 'numerica' =
+        tallasById.get(p.talla_id || -1)?.tipo || 'alfanumerica';
+      const famKey = `${p.name}::${p.categoria_id ?? 0}::${tipo}`;
+      if (!map.has(famKey)) {
+        map.set(famKey, {
           name: p.name,
           categoria_id: p.categoria_id ?? null,
           categoria_nombre: p.categoria_nombre ?? null,
@@ -286,17 +327,24 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
         });
       }
       if (p.talla_id) {
-        map.get(key)!.byTalla[p.talla_id] = p;
+        map.get(famKey)!.byTalla[p.talla_id] = p;
       }
     }
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [products]);
+  }, [products, tallasById]);
 
   // Todas las tallas por tipo (para construir columnas de la matriz)
-  const tallasByTipo = useMemo(() => ({
-    alfanumerica: tallas.filter(t => t.tipo === 'alfanumerica').sort((a,b) => ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta)),
-    numerica: tallas.filter(t => t.tipo === 'numerica').sort((a,b) => (a.orden ?? 0) - (b.orden ?? 0)),
-  }), [tallas]);
+  const tallasByTipo = useMemo(
+    () => ({
+      alfanumerica: tallas
+        .filter((t) => t.tipo === 'alfanumerica')
+        .sort((a, b) => ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta)),
+      numerica: tallas
+        .filter((t) => t.tipo === 'numerica')
+        .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)),
+    }),
+    [tallas]
+  );
 
   const columnsForFam = (fam: FamRow) =>
     fam.tipo === 'numerica' ? tallasByTipo.numerica : tallasByTipo.alfanumerica;
@@ -331,6 +379,29 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     setShowPreview(true);
     setCatQuery('');
     setCatOpts([]);
+
+    // Reset talla/grid
+    setSizeGridId('');
+    setSizeGridRowId('');
+    setSizeValue('');
+
+    // Completar SIZE / GRID desde función si hay mapeo
+    (async () => {
+      try {
+        if (!p.talla_id) return;
+        const { data, error } = await supabase.functions.invoke('meli-size-resolve', {
+          body: { categoria_ml_id: d.category_id, talla_id: p.talla_id },
+        });
+        if (!error && data?.ok) {
+          setSizeValue(data.size);
+          setSizeGridId(data.size_grid_id);
+          setSizeGridRowId(data.size_grid_row_id);
+          setDraftError(null);
+        } else if (data?.error === 'missing_mapping') {
+          setDraftError('Falta configurar guía de tallas para esta talla/categoría (revisar meli_size_map).');
+        }
+      } catch {}
+    })();
   }
 
   async function confirmPublish() {
@@ -339,10 +410,27 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     if (!draft.title.trim()) return setDraftError('Título requerido');
     if (!draft.pictures.length) return setDraftError('Debes subir al menos una imagen');
 
+    // Inyección de atributos de talla/guía si existen
     const safeDraft: DraftPublish = {
       ...draft,
       category_id: draft.category_id.startsWith('ML') ? draft.category_id : 'MLC3530',
     };
+
+    const attributes = [...safeDraft.attributes];
+    if (sizeValue) {
+      const i = attributes.findIndex((a) => a.id === 'SIZE');
+      if (i >= 0) attributes[i] = { id: 'SIZE', value_name: sizeValue };
+      else attributes.push({ id: 'SIZE', value_name: sizeValue });
+    }
+    if (sizeGridId && sizeGridRowId) {
+      const ig = attributes.findIndex((a) => a.id === 'SIZE_GRID_ID');
+      const ir = attributes.findIndex((a) => a.id === 'SIZE_GRID_ROW_ID');
+      if (ig >= 0) attributes[ig] = { id: 'SIZE_GRID_ID', value_name: sizeGridId };
+      else attributes.push({ id: 'SIZE_GRID_ID', value_name: sizeGridId });
+      if (ir >= 0) attributes[ir] = { id: 'SIZE_GRID_ROW_ID', value_name: sizeGridRowId };
+      else attributes.push({ id: 'SIZE_GRID_ROW_ID', value_name: sizeGridRowId });
+    }
+    safeDraft.attributes = attributes;
 
     try {
       setDraftSending(true);
@@ -486,9 +574,6 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                     <td className="py-4 px-4 w-64">
                       <div className="font-semibold">{fam.name}</div>
                       <div className="text-sm text-neutral-500">{fam.categoria_nombre || '—'}</div>
-                      <div className="text-[11px] text-neutral-500">
-                        {fam.tipo === 'numerica' ? 'Tallas numéricas' : 'Tallas alfanuméricas'}
-                      </div>
                     </td>
 
                     {/* Matriz de tallas */}
@@ -500,15 +585,17 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                         >
                           {/* Encabezados tallas */}
                           <div></div>
-                          {cols.map(t => (
-                            <div key={t.id} className="text-center text-xs text-neutral-700 font-medium">{t.etiqueta}</div>
+                          {cols.map((t) => (
+                            <div key={t.id} className="text-center text-xs text-neutral-700 font-medium">
+                              {t.etiqueta}
+                            </div>
                           ))}
 
                           {/* Fila: Stock ML */}
                           <div className="text-right pr-2">
                             <span className="px-2 py-1 rounded text-xs font-semibold bg-amber-100 text-amber-700">Stock ML</span>
                           </div>
-                          {cols.map(t => {
+                          {cols.map((t) => {
                             const p = fam.byTalla[t.id];
                             const val = p?.stockml ?? 0;
                             const cls = val === 0 ? 'text-red-600' : val < 5 ? 'text-orange-600' : 'text-green-700';
@@ -523,7 +610,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                           <div className="text-right pr-2">
                             <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">Publicación</span>
                           </div>
-                          {cols.map(t => {
+                          {cols.map((t) => {
                             const p = fam.byTalla[t.id];
                             if (!p) return <div key={t.id} className="text-center text-neutral-400">—</div>;
                             const published = isSkuPublished(p.sku);
@@ -628,42 +715,65 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
 
                 {/* Categoría ML (buscador) */}
                 <label className="text-sm text-neutral-600">Categoría</label>
-                <div className="relative">
-                  <input
-                    className="w-full border rounded-xl p-3 pr-24"
-                    placeholder="Buscar categoría de Mercado Libre..."
-                    value={catQuery}
-                    onChange={(e) => setCatQuery(e.target.value)}
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-neutral-500">
-                    {catLoading ? 'Buscando...' : 'MLC'}
-                  </span>
+<div className="relative">
+  <input
+    className="w-full border rounded-xl p-3 pr-24"
+    placeholder="Buscar categoría de Mercado Libre..."
+    value={catQuery}
+    onChange={(e) => setCatQuery(e.target.value)}
+  />
+  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-neutral-500">
+    {catLoading ? 'Buscando...' : 'MLC'}
+  </span>
 
-                  {catOpts.length > 0 && (
-                    <div className="absolute z-10 mt-1 w-full bg-white border rounded-lg max-h-56 overflow-auto shadow">
-                      {catOpts.map(opt => (
-                        <button
-                          type="button"
-                          key={opt.category_id + opt.domain_name}
-                          onClick={() => {
-                            setDraft(d => d ? { ...d, category_id: opt.category_id } : d);
-                            setDraftCatName(`${opt.category_name}`);
-                            setCatQuery(`${opt.category_name}`);
-                            setCatOpts([]);
-                          }}
-                          className="w-full text-left px-3 py-2 hover:bg-neutral-50"
-                        >
-                          <div className="text-sm font-medium">{opt.category_name}</div>
-                          <div className="text-xs text-neutral-500">{opt.domain_name} · {opt.category_id}</div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <p className="text-xs text-neutral-500 mt-1">
-                  {draft?.category_id || '—'} · valor asignado para Mercado Libre
-                </p>
+  {catOpts.length > 0 && (
+    <div className="absolute z-10 mt-1 w-full bg-white border rounded-lg max-h-56 overflow-auto shadow">
+      {catOpts.map((opt) => (
+        <button
+          type="button"
+          key={opt.id}
+          onClick={async () => {
+            // setea categoría en el borrador y etiqueta visible
+            setDraft((d) => (d ? { ...d, category_id: opt.id } : d));
+            setDraftCatName(opt.name);
+            setCatQuery(opt.name);
+            setCatOpts([]);
 
+            // si tenías talla precargada, re-resuelve SIZE/SIZE_GRID con la nueva categoría
+            try {
+              if (draft && draft.sku) {
+                // limpiamos grid previo
+                setSizeGridId('');
+                setSizeGridRowId('');
+
+                // si tenías el producto seleccionado en el modal, recupéralo por sku
+                const p = products.find(pp => pp.sku === draft.sku);
+                if (p?.talla_id) {
+                  const { data } = await supabase.functions.invoke('meli-size-resolve', {
+                    body: { categoria_ml_id: opt.id, talla_id: p.talla_id }
+                  });
+                  if (data?.ok) {
+                    setSizeValue(data.size);
+                    setSizeGridId(data.size_grid_id);
+                    setSizeGridRowId(data.size_grid_row_id);
+                    setDraftError(null);
+                  }
+                }
+              }
+            } catch {}
+          }}
+          className="w-full text-left px-3 py-2 hover:bg-neutral-50"
+        >
+          <div className="text-sm font-medium">{opt.name}</div>
+          <div className="text-xs text-neutral-500">{opt.domain_name || 'Mercado Libre'} · {opt.id}</div>
+        </button>
+      ))}
+    </div>
+  )}
+</div>
+<p className="text-xs text-neutral-500 mt-1">
+  {(draftCatName || draft?.category_id || '—')} · valor asignado para Mercado Libre
+</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-sm text-neutral-600">Marca (BRAND)</label>
@@ -707,10 +817,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                   >
                     {draftSending ? 'Publicando…' : 'Publicar ahora'}
                   </button>
-                  <button
-                    onClick={() => setShowPreview(false)}
-                    className="px-4 py-2 rounded-lg border hover:bg-neutral-50"
-                  >
+                  <button onClick={() => setShowPreview(false)} className="px-4 py-2 rounded-lg border hover:bg-neutral-50">
                     Cancelar
                   </button>
                 </div>
@@ -724,10 +831,37 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                   className={`bg-neutral-100 h-40 flex items-center justify-center relative rounded-md border-2 ${
                     isDragging ? 'border-amber-500 border-dashed bg-amber-50' : 'border-transparent'
                   }`}
+                  onDragEnter={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dragCounter.current++;
+                    setIsDragging(true);
+                  }}
                   onDragOver={(e) => {
                     e.preventDefault();
-                    // eslint-disable-next-line react-hooks/rules-of-hooks
-                    // hooks no aquí
+                    e.stopPropagation();
+                    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dragCounter.current = Math.max(0, dragCounter.current - 1);
+                    if (dragCounter.current === 0) setIsDragging(false);
+                  }}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dragCounter.current = 0;
+                    setIsDragging(false);
+                    try {
+                      const file = e.dataTransfer?.files?.[0];
+                      if (!file) return;
+                      if (!file.type.startsWith('image/')) throw new Error('Solo se permiten imágenes');
+                      const url = await uploadFileToStorage(file);
+                      setDraft((d) => (d ? { ...d, pictures: [url, ...d.pictures] } : d));
+                    } catch (err: any) {
+                      setDraftError(err?.message || 'No se pudo cargar la imagen');
+                    }
                   }}
                 >
                   <img
@@ -738,34 +872,11 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                     alt="preview"
                     className="h-full object-contain"
                   />
-                </div>
-
-                <div className="mt-3 flex items-center gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={async () => {
-                      try {
-                        const input = fileInputRef.current;
-                        const file = input?.files?.[0];
-                        if (!file) return;
-                        const url = await uploadFileToStorage(file);
-                        setDraft((d) => (d ? { ...d, pictures: [url, ...d.pictures] } : d));
-                        if (input) input.value = '';
-                      } catch (err: any) {
-                        setDraftError(err?.message || 'No se pudo cargar la imagen');
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="px-3 py-2 rounded-lg border hover:bg-neutral-50 text-sm"
-                  >
-                    Cargar imagen
-                  </button>
+                  {isDragging && (
+                    <div className="absolute inset-0 flex items-center justify-center text-sm font-medium text-amber-700">
+                      Suelta la imagen para subirla
+                    </div>
+                  )}
                 </div>
 
                 {draft.pictures.length > 0 && (
@@ -776,9 +887,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                         <button
                           title="Eliminar"
                           onClick={() =>
-                            setDraft((d) =>
-                              d ? { ...d, pictures: d.pictures.filter((_, idx) => idx !== i) } : d
-                            )
+                            setDraft((d) => (d ? { ...d, pictures: d.pictures.filter((_, idx) => idx !== i) } : d))
                           }
                           className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition bg-white/80 rounded-full p-1 shadow"
                         >
@@ -803,9 +912,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                   </div>
                 </div>
 
-                <p className="text-xs text-neutral-500 mt-3">
-                  El resultado final puede variar según validaciones de Mercado Libre.
-                </p>
+                <p className="text-xs text-neutral-500 mt-3">El resultado final puede variar según validaciones de Mercado Libre.</p>
               </div>
             </div>
           </div>
