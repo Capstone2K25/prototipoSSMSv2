@@ -201,13 +201,14 @@ export const Admin = ({ user }: AdminProps) => {
   const loadMlCreds = async () => {
     setMlLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('ml_credentials')
-        .select('*')
-        .eq('id', CREDS_ID)
-        .maybeSingle();
-      if (error) throw error;
-      setMlCreds(data as any);
+      const { data } = await supabase
+            .from('ml_credentials')
+            .select('*')
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          setMlCreds(data);
+
       if (data) {
         setMlForm({
           access_token: (data as any).access_token || '',
@@ -225,57 +226,77 @@ export const Admin = ({ user }: AdminProps) => {
     }
   };
 
-  const saveMlCreds = async () => {
-    if (!mlForm.access_token || !mlForm.refresh_token || !mlForm.expires_at) {
-      toast('Completa access_token, refresh_token y expires_at');
-      return;
+  // Guardar manual (modal)
+const saveMlCreds = async () => {
+  if (!mlForm.access_token || !mlForm.refresh_token || !mlForm.expires_at) {
+    toast('Completa access_token, refresh_token y expires_at');
+    return;
+  }
+  setMlSaving(true);
+  try {
+    // normaliza expires_at a ISO
+    let exp = mlForm.expires_at;
+    const n = Number(exp);
+    if (!Number.isNaN(n)) {
+      exp = (n > 1e12 ? new Date(n) : new Date(n * 1000)).toISOString();
+    } else {
+      const parsed = Date.parse(exp);
+      exp = Number.isFinite(parsed) ? new Date(parsed).toISOString() : exp;
     }
-    setMlSaving(true);
-    try {
-      // Normaliza expires_at a ISO
-      let exp = mlForm.expires_at;
-      const n = Number(exp);
-      if (!Number.isNaN(n)) {
-        exp = (n > 1e12 ? new Date(n) : new Date(n * 1000)).toISOString();
-      } else {
-        const parsed = Date.parse(exp);
-        exp = Number.isFinite(parsed) ? new Date(parsed).toISOString() : exp;
-      }
 
-      const payload = {
-        id: CREDS_ID,
-        access_token: mlForm.access_token,
-        refresh_token: mlForm.refresh_token,
-        expires_at: exp,
-        updated_at: new Date().toISOString()
-      };
-      const { error } = await supabase.from('ml_credentials').upsert(payload, { onConflict: 'id' });
+    const nowIso = new Date().toISOString();
+
+    // 👇 si ya hay fila, actualiza por id; si no, inserta (UUID autogenerado)
+    if (mlCreds?.id) {
+      const { error } = await supabase
+        .from('ml_credentials')
+        .update({
+          access_token: mlForm.access_token,
+          refresh_token: mlForm.refresh_token,
+          expires_at: exp,
+          updated_at: nowIso,
+        })
+        .eq('id', mlCreds.id);
       if (error) throw error;
-
-      emitAlert({ type: 'sync', message: 'Credenciales ML guardadas', channel: 'ml' });
-      await Promise.all([loadMlCreds(), fetchHealth()]);
-      setMlModalOpen(false);
-    } catch (e: any) {
-      console.error(e);
-      emitAlert({ type: 'error', message: `Error guardando credenciales ML: ${e.message || e}`, channel: 'ml' });
-    } finally {
-      setMlSaving(false);
+    } else {
+      const { error } = await supabase
+        .from('ml_credentials')
+        .insert({
+          access_token: mlForm.access_token,
+          refresh_token: mlForm.refresh_token,
+          expires_at: exp,
+          updated_at: nowIso,
+        });
+      if (error) throw error;
     }
-  };
 
-  const disconnectMl = async () => {
-    if (!confirm('¿Desconectar Mercado Libre? Se eliminarán las credenciales.')) return;
+    emitAlert({ type: 'sync', message: 'Credenciales ML guardadas', channel: 'ml' });
+    await Promise.all([loadMlCreds(), fetchHealth()]);
+    setMlModalOpen(false);
+  } catch (e: any) {
+    console.error(e);
+    emitAlert({ type: 'error', message: `Error guardando credenciales ML: ${e.message || e}`, channel: 'ml' });
+  } finally {
+    setMlSaving(false);
+  }
+};
+
+
+  const desconectar = async () => {
+  if (!confirm('¿Desconectar Mercado Libre? Se eliminarán las credenciales.')) return;
   setSaving(true);
   try {
     const { data, error } = await supabase.functions.invoke('meli-disconnect', { method: 'POST' });
     if (error || data?.error) throw new Error(error?.message ?? data?.error ?? 'Fallo al desconectar');
-    await fetchHealth(); // refresca estado
+    await fetchHealth();
+    await loadMlCreds();
   } catch (e:any) {
     alert(e.message ?? 'Error');
   } finally {
     setSaving(false);
   }
 };
+
 
   const startMeliOAuth = async () => {
     try {
@@ -289,30 +310,44 @@ export const Admin = ({ user }: AdminProps) => {
     }
   };
 
-  const refreshMeliToken = async () => {
-    try {
-      const { data, error } = await supabase.functions.invoke('meli-refresh-token', {});
-      if (error) throw new Error(error.message || 'No se pudo refrescar token');
+  // Refrescar token (desde botón)
+const refreshMeliToken = async () => {
+  try {
+    const { data, error } = await supabase.functions.invoke('meli-refresh-token', {});
+    if (error) throw new Error(error.message || 'No se pudo refrescar token');
 
-      const { access_token, refresh_token, expires_in } = data as any;
-      const expires_at = new Date(Date.now() + Number(expires_in) * 1000).toISOString();
+    const { access_token, refresh_token, expires_in } = data as any;
+    const expires_at = new Date(Date.now() + Number(expires_in) * 1000).toISOString();
 
-      const up = {
-        id: CREDS_ID,
+    if (!mlCreds?.id) {
+      // si por alguna razón no hay fila cargada, inserta una nueva
+      const { error: insErr } = await supabase.from('ml_credentials').insert({
         access_token,
-        refresh_token: refresh_token || mlCreds?.refresh_token || '',
+        refresh_token: refresh_token || '',
         expires_at,
-        updated_at: new Date().toISOString()
-      };
-      const { error: upErr } = await supabase.from('ml_credentials').upsert(up, { onConflict: 'id' });
+        updated_at: new Date().toISOString(),
+      });
+      if (insErr) throw insErr;
+    } else {
+      // actualiza por UUID existente
+      const { error: upErr } = await supabase
+        .from('ml_credentials')
+        .update({
+          access_token,
+          refresh_token: refresh_token || mlCreds.refresh_token || '',
+          expires_at,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', mlCreds.id);
       if (upErr) throw upErr;
-
-      emitAlert({ type: 'sync', message: 'Token ML actualizado', channel: 'ml' });
-      await Promise.all([loadMlCreds(), fetchHealth()]);
-    } catch (e: any) {
-      emitAlert({ type: 'error', message: `No se pudo actualizar el token: ${e.message || e}`, channel: 'ml' });
     }
-  };
+
+    emitAlert({ type: 'sync', message: 'Token ML actualizado', channel: 'ml' });
+    await Promise.all([loadMlCreds(), fetchHealth()]);
+  } catch (e: any) {
+    emitAlert({ type: 'error', message: `No se pudo actualizar el token: ${e.message || e}`, channel: 'ml' });
+  }
+};
 
   // ------ DATA LOADER USUARIOS ------
   const loadUsers = async (nextPage = page, currentSearch = search, currentPageSize = pageSize) => {
@@ -641,7 +676,7 @@ export const Admin = ({ user }: AdminProps) => {
                 </button>
 
                 <button
-                  onClick={disconnectMl}
+                  onClick={desconectar}
                   disabled={!health?.connected || mlLoading || saving}
                   className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border hover:bg-neutral-50 disabled:opacity-50"
                   title="Desconectar y borrar credenciales almacenadas"
