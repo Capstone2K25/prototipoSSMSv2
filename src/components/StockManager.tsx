@@ -1,18 +1,32 @@
 // src/components/StockManager.tsx
-import { useEffect, useMemo, useRef, useState, startTransition } from 'react';
-import { Plus, Pencil, Trash2, X, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from 'lucide-react';
-import toast from 'react-hot-toast';
-import { supabase } from '../supabaseClient';
-import { emitAlert } from '../state/alertsBus';
+import { useEffect, useMemo, useRef, useState, startTransition } from "react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  X,
+  ChevronsLeft,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsRight,
+} from "lucide-react";
+import toast from "react-hot-toast";
+import { supabase } from "../supabaseClient";
+import { emitAlert } from "../state/alertsBus";
 import {
   wooCreateProductLocal,
   wooDeleteProductLocal,
   wooPushStockLocal,
-  wooUpdateProductLocal, // ✅ usamos este para sync de precio + stock web en updates
-} from '../data/woo';
+  wooUpdateProductLocal,
+} from "../data/woo";
 
 type LookupCat = { id: number; name: string };
-type LookupTal = { id: number; tipo: 'alfanumerica' | 'numerica'; etiqueta: string; orden: number | null };
+type LookupTal = {
+  id: number;
+  tipo: "alfanumerica" | "numerica";
+  etiqueta: string;
+  orden: number | null;
+};
 
 type Product = {
   id: number;
@@ -26,14 +40,14 @@ type Product = {
   stockml: number;
 };
 
-type SortOrder = 'asc' | 'desc';
-type Channel = 'B2B' | 'Web' | 'ML';
+type SortOrder = "asc" | "desc";
+type Channel = "B2B" | "Web" | "ML";
 
 type FamKey = string; // `${name}::${categoria_id}::${tipo}`
 type FamRow = {
   name: string;
   categoria_id: number | null;
-  tipo: 'alfanumerica' | 'numerica';
+  tipo: "alfanumerica" | "numerica";
   byTalla: Record<number, Product>; // talla_id -> producto
 };
 
@@ -41,7 +55,7 @@ type EditFamilyState = {
   name: string;
   basePrice: number; // ✅ precio base para tallas nuevas
   categoria_id: number | null;
-  tipo: 'alfanumerica' | 'numerica';
+  tipo: "alfanumerica" | "numerica";
   cols: LookupTal[]; // columnas (tallas)
   values: Record<
     number,
@@ -55,7 +69,7 @@ type EditFamilyState = {
   >;
 };
 
-const ALFA_ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
+const ALFA_ORDER = ["XS", "S", "M", "L", "XL", "XXL", "3XL"];
 
 export const StockManager = () => {
   // datos
@@ -67,8 +81,8 @@ export const StockManager = () => {
   const [tallas, setTallas] = useState<LookupTal[]>([]);
 
   // filtros / búsqueda
-  const [searchTerm, setSearchTerm] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<'all' | number>('all');
+  const [searchTerm, setSearchTerm] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<"all" | number>("all");
 
   // paginación (sobre familias)
   const [page, setPage] = useState<number>(1);
@@ -77,12 +91,14 @@ export const StockManager = () => {
   // estados UI
   const [loading, setLoading] = useState(true);
   const [tableBusy, setTableBusy] = useState(false);
-  const [lastUpdate, setLastUpdate] = useState<string>('');
+  const [lastUpdate, setLastUpdate] = useState<string>("");
 
   // modal
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any>(null); // modo crear
-  const [editingFamily, setEditingFamily] = useState<EditFamilyState | null>(null); // modo matriz
+  const [editingFamily, setEditingFamily] = useState<EditFamilyState | null>(
+    null
+  ); // modo matriz
   const [isExistingSKU, setIsExistingSKU] = useState<boolean>(false);
 
   // selección múltiple
@@ -98,37 +114,64 @@ export const StockManager = () => {
     return () => clearTimeout(t);
   }, [searchTerm]);
 
-  const toastAndLog = (msg: string, type: 'info' | 'error' | 'sync' = 'info') => {
-    if (type === 'error') toast.error(msg);
-    else if (type === 'sync') toast.success(msg);
-    else toast(msg, { icon: 'ℹ️' });
-    emitAlert({ type, message: msg, channel: 'stock' });
+  const toastAndLog = (
+    msg: string,
+    type: "info" | "error" | "sync" = "info"
+  ) => {
+    if (type === "error") toast.error(msg);
+    else if (type === "sync") toast.success(msg);
+    else toast(msg, { icon: "ℹ️" });
+    emitAlert({ type, message: msg, channel: "stock" });
   };
 
   // cargar lookups
   const loadLookups = async () => {
     const [{ data: dc }, { data: dt }] = await Promise.all([
-      supabase.from('categorias').select('id_categoria, nombre_categoria').order('nombre_categoria', { ascending: true }),
       supabase
-        .from('tallas')
-        .select('id_talla, tipo, etiqueta, valor_numerico')
-        .order('tipo')
-        .order('valor_numerico', { ascending: true, nullsFirst: true })
-        .order('etiqueta'),
+        .from("categorias")
+        .select("id_categoria, nombre_categoria")
+        .order("nombre_categoria", { ascending: true }),
+      supabase
+        .from("tallas")
+        .select("id_talla, tipo, etiqueta, valor_numerico")
+        .order("tipo")
+        .order("valor_numerico", { ascending: true, nullsFirst: true })
+        .order("etiqueta"),
     ]);
-    setCats((dc ?? []).map((r) => ({ id: r.id_categoria, name: r.nombre_categoria })));
-    setTallas((dt ?? []).map((r) => ({ id: r.id_talla, tipo: r.tipo, etiqueta: r.etiqueta, orden: r.valor_numerico })));
+    setCats(
+      (dc ?? []).map((r) => ({ id: r.id_categoria, name: r.nombre_categoria }))
+    );
+    setTallas(
+      (dt ?? []).map((r) => ({
+        id: r.id_talla,
+        tipo: r.tipo,
+        etiqueta: r.etiqueta,
+        orden: r.valor_numerico,
+      }))
+    );
   };
 
   // diccionarios
-  const catById = useMemo(() => Object.fromEntries(cats.map((c) => [c.id, c.name])), [cats]);
+  const catById = useMemo(
+    () => Object.fromEntries(cats.map((c) => [c.id, c.name])),
+    [cats]
+  );
   const tallaById = useMemo(
-    () => Object.fromEntries(tallas.map((t) => [t.id, { etiqueta: t.etiqueta, tipo: t.tipo, orden: t.orden ?? null }])),
-    [tallas],
+    () =>
+      Object.fromEntries(
+        tallas.map((t) => [
+          t.id,
+          { etiqueta: t.etiqueta, tipo: t.tipo, orden: t.orden ?? null },
+        ])
+      ),
+    [tallas]
   );
 
   // query productos
-  const fetchProducts = async (opts?: { silent?: boolean; keepSelection?: boolean }) => {
+  const fetchProducts = async (opts?: {
+    silent?: boolean;
+    keepSelection?: boolean;
+  }) => {
     const { silent = false, keepSelection = false } = opts || {};
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
@@ -139,19 +182,22 @@ export const StockManager = () => {
       setTableBusy(true);
 
       let query = supabase
-        .from('productos')
-        .select('id, name, sku, price, categoria_id, talla_id, stockb2b, stockweb, stockml', { count: 'exact' });
+        .from("productos")
+        .select(
+          "id, name, sku, price, categoria_id, talla_id, stockb2b, stockweb, stockml",
+          { count: "exact" }
+        );
 
-      if (categoryFilter !== 'all') {
-        query = query.eq('categoria_id', categoryFilter);
+      if (categoryFilter !== "all") {
+        query = query.eq("categoria_id", categoryFilter);
       }
 
       if (debouncedSearch) {
-        const term = debouncedSearch.replace(/%/g, '').toLowerCase();
+        const term = debouncedSearch.replace(/%/g, "").toLowerCase();
         query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%`);
       }
 
-      query = query.order('id', { ascending: true });
+      query = query.order("id", { ascending: true });
 
       const { data, error, count } = await query;
       if (error) throw error;
@@ -175,9 +221,9 @@ export const StockManager = () => {
         if (!keepSelection) setSelectedIds([]);
       });
     } catch (err: any) {
-      if (err?.name === 'AbortError') return;
-      console.error('Error al obtener productos:', err);
-      toastAndLog('No se pudieron cargar productos.', 'error');
+      if (err?.name === "AbortError") return;
+      console.error("Error al obtener productos:", err);
+      toastAndLog("No se pudieron cargar productos.", "error");
     } finally {
       setLoading(false);
       setTableBusy(false);
@@ -190,7 +236,10 @@ export const StockManager = () => {
   }, []);
   useEffect(() => {
     if (cats.length && tallas.length) fetchProducts();
-    const interval = setInterval(() => fetchProducts({ silent: true, keepSelection: true }), 100000);
+    const interval = setInterval(
+      () => fetchProducts({ silent: true, keepSelection: true }),
+      100000
+    );
     return () => {
       clearInterval(interval);
       abortRef.current?.abort();
@@ -206,40 +255,64 @@ export const StockManager = () => {
     fetchProducts({ silent: true });
   }, [categoryFilter, debouncedSearch]); // eslint-disable-line
 
-  const formatPrice = (price: number) => new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(price);
+  const formatPrice = (price: number) =>
+    new Intl.NumberFormat("es-CL", {
+      style: "currency",
+      currency: "CLP",
+    }).format(price);
 
   const getStockStatusClass = (stock: number) => {
-    if (stock < 5) return 'text-red-600';
-    if (stock < 10) return 'text-orange-600';
-    return 'text-green-700';
+    if (stock < 5) return "text-red-600";
+    if (stock < 10) return "text-orange-600";
+    return "text-green-700";
   };
 
   // selección por checkbox (opcional)
   const toggleSelect = (id: number) => {
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
+    );
   };
 
   // eliminar seleccionados (opcional)
   const deleteSelected = async () => {
-    if (selectedIds.length === 0) return toast.error('No hay productos seleccionados.');
-    if (!confirm(`¿Eliminar ${selectedIds.length} producto(s) en BD y Woo?`)) return;
+    if (selectedIds.length === 0)
+      return toast.error("No hay productos seleccionados.");
+    if (!confirm(`¿Eliminar ${selectedIds.length} producto(s) en BD y Woo?`))
+      return;
 
     const selectedProducts = products.filter((p) => selectedIds.includes(p.id));
     const skus = selectedProducts.map((p) => String(p.sku));
 
-    const results = await Promise.allSettled(skus.map((sku) => wooDeleteProductLocal(sku)));
-    const okWoo = results.filter((r) => r.status === 'fulfilled').length;
+    const results = await Promise.allSettled(
+      skus.map((sku) => wooDeleteProductLocal(sku))
+    );
+    const okWoo = results.filter((r) => r.status === "fulfilled").length;
     const failWoo = results.length - okWoo;
 
-    const { error } = await supabase.from('productos').delete().in('id', selectedIds);
+    const { error } = await supabase
+      .from("productos")
+      .delete()
+      .in("id", selectedIds);
     if (error) {
       console.error(error);
-      toastAndLog(error.message || 'Error al eliminar productos en BD.', 'error');
+      toastAndLog(
+        error.message || "Error al eliminar productos en BD.",
+        "error"
+      );
       return;
     }
 
-    selectedProducts.forEach((p) => emitAlert({ type: 'error', message: `Producto eliminado: ${p.name} (SKU ${p.sku})`, channel: 'stock' }));
-    toast.success(`Eliminados ${selectedIds.length} en BD. Woo: ${okWoo} ok / ${failWoo} fallo(s).`);
+    selectedProducts.forEach((p) =>
+      emitAlert({
+        type: "error",
+        message: `Producto eliminado: ${p.name} (SKU ${p.sku})`,
+        channel: "stock",
+      })
+    );
+    toast.success(
+      `Eliminados ${selectedIds.length} en BD. Woo: ${okWoo} ok / ${failWoo} fallo(s).`
+    );
 
     setSelectedIds([]);
     fetchProducts({ silent: true });
@@ -249,8 +322,12 @@ export const StockManager = () => {
   const filtered = useMemo(() => {
     const term = debouncedSearch.toLowerCase();
     return products.filter((p) => {
-      const matchCat = categoryFilter === 'all' || (p.categoria_id ?? null) === categoryFilter;
-      const matchText = !term || (p.name || '').toLowerCase().includes(term) || (p.sku || '').toLowerCase().includes(term);
+      const matchCat =
+        categoryFilter === "all" || (p.categoria_id ?? null) === categoryFilter;
+      const matchText =
+        !term ||
+        (p.name || "").toLowerCase().includes(term) ||
+        (p.sku || "").toLowerCase().includes(term);
       return matchCat && matchText;
     });
   }, [products, categoryFilter, debouncedSearch]);
@@ -259,25 +336,36 @@ export const StockManager = () => {
     const map = new Map<FamKey, FamRow>();
     for (const p of filtered) {
       const t = p.talla_id ? tallaById[p.talla_id] : null;
-      const tipo = (t?.tipo ?? 'alfanumerica') as 'alfanumerica' | 'numerica';
+      const tipo = (t?.tipo ?? "alfanumerica") as "alfanumerica" | "numerica";
       const key: FamKey = `${p.name}::${p.categoria_id ?? 0}::${tipo}`;
-      if (!map.has(key)) map.set(key, { name: p.name, categoria_id: p.categoria_id ?? null, tipo, byTalla: {} });
+      if (!map.has(key))
+        map.set(key, {
+          name: p.name,
+          categoria_id: p.categoria_id ?? null,
+          tipo,
+          byTalla: {},
+        });
       if (p.talla_id) map.get(key)!.byTalla[p.talla_id] = p;
     }
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return Array.from(map.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
   }, [filtered, tallaById]);
 
   const columnsForFam = (fam: FamRow) => {
     const tallasFam = tallas.filter((t) => t.tipo === fam.tipo);
-    return fam.tipo === 'numerica'
+    return fam.tipo === "numerica"
       ? [...tallasFam].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0))
-      : [...tallasFam].sort((a, b) => ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta));
+      : [...tallasFam].sort(
+          (a, b) =>
+            ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta)
+        );
   };
 
   // abrir modal de edición MATRIZ por familia
   const openEditFamily = (fam: FamRow) => {
     const cols = columnsForFam(fam);
-    const values: EditFamilyState['values'] = {};
+    const values: EditFamilyState["values"] = {};
     let basePrice = 0;
 
     cols.forEach((t) => {
@@ -311,7 +399,7 @@ export const StockManager = () => {
   const showingTo = Math.min(totalFamilies, page * pageSize);
   const pageFams = useMemo(
     () => fams.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize),
-    [fams, page, pageSize],
+    [fams, page, pageSize]
   );
 
   const goFirst = () => setPage(1);
@@ -324,7 +412,13 @@ export const StockManager = () => {
     try {
       if (isExistingSKU && editingFamily) {
         // ---- MODO EDITAR FAMILIA ----
-        const updates: Array<{ id: number; stockb2b: number; stockweb: number; stockml: number; price: number }> = [];
+        const updates: Array<{
+          id: number;
+          stockb2b: number;
+          stockweb: number;
+          stockml: number;
+          price: number;
+        }> = [];
         const creates: Array<{
           name: string;
           price: number;
@@ -342,10 +436,19 @@ export const StockManager = () => {
           const b2b = Math.max(0, Number(v.b2b || 0));
           const web = Math.max(0, Number(v.web || 0));
           const ml = Math.max(0, Number(v.ml || 0));
-          const price = Math.max(0, Number(v.price ?? editingFamily.basePrice ?? 0));
+          const price = Math.max(
+            0,
+            Number(v.price ?? editingFamily.basePrice ?? 0)
+          );
 
           if (v.id) {
-            updates.push({ id: v.id, stockb2b: b2b, stockweb: web, stockml: ml, price });
+            updates.push({
+              id: v.id,
+              stockb2b: b2b,
+              stockweb: web,
+              stockml: ml,
+              price,
+            });
           } else {
             const total = b2b + web + ml;
             if (total > 0) {
@@ -367,22 +470,33 @@ export const StockManager = () => {
           const res = await Promise.allSettled(
             updates.map((u) =>
               supabase
-                .from('productos')
-                .update({ stockb2b: u.stockb2b, stockweb: u.stockweb, stockml: u.stockml, price: u.price })
-                .eq('id', u.id),
-            ),
+                .from("productos")
+                .update({
+                  stockb2b: u.stockb2b,
+                  stockweb: u.stockweb,
+                  stockml: u.stockml,
+                  price: u.price,
+                })
+                .eq("id", u.id)
+            )
           );
-          const failed = res.filter((r) => r.status === 'rejected' || (r as any).value?.error).length;
-          if (failed) toastAndLog('Algunas tallas no pudieron actualizarse.', 'error');
+          const failed = res.filter(
+            (r) => r.status === "rejected" || (r as any).value?.error
+          ).length;
+          if (failed)
+            toastAndLog("Algunas tallas no pudieron actualizarse.", "error");
         }
 
         // INSERT nuevos (BD genera SKU)
         let createdRows: any[] = [];
         if (creates.length) {
-          const { data, error } = await supabase.from('productos').insert(creates).select();
+          const { data, error } = await supabase
+            .from("productos")
+            .insert(creates)
+            .select();
           if (error) {
             console.error(error);
-            toastAndLog('No se pudieron crear algunas tallas.', 'error');
+            toastAndLog("No se pudieron crear algunas tallas.", "error");
           } else createdRows = data || [];
         }
 
@@ -398,7 +512,7 @@ export const StockManager = () => {
                 price: Number(u.price),
                 absoluteStockWeb: Number(u.stockweb),
               });
-            }),
+            })
           );
 
           // Para los nuevos: crea en Woo y setea stock web inicial
@@ -409,8 +523,10 @@ export const StockManager = () => {
                 name: row.name,
                 price: Number(row.price),
                 initialStockWeb: Number(row.stockweb || 0),
-              }).then(() => wooPushStockLocal(String(row.sku), Number(row.stockweb || 0))),
-            ),
+              }).then(() =>
+                wooPushStockLocal(String(row.sku), Number(row.stockweb || 0))
+              )
+            )
           );
         } catch {
           /* ignoramos errores de Woo */
@@ -419,12 +535,13 @@ export const StockManager = () => {
         const msg: string[] = [];
         if (updates.length) msg.push(`Actualizadas ${updates.length}`);
         if (creates.length) msg.push(`Creadas ${creates.length}`);
-        toastAndLog(msg.join(' · ') || 'Sin cambios', 'sync');
+        toastAndLog(msg.join(" · ") || "Sin cambios", "sync");
       } else {
         // ---- MODO CREAR ----
-        const name = (editingProduct?.name || '').toString().trim();
+        const name = (editingProduct?.name || "").toString().trim();
         const categoria_id = Number(editingProduct?.categoria_id || 0) || null;
-        if (!name || !categoria_id) return toast.error('Completa nombre y categoría.');
+        if (!name || !categoria_id)
+          return toast.error("Completa nombre y categoría.");
 
         const matrix = editingProduct?.matrix || {};
         const rows = Object.entries(matrix)
@@ -434,17 +551,32 @@ export const StockManager = () => {
             const ml = Math.max(0, Number(v?.ml || 0));
             const total = b2b + web + ml;
             if (total === 0) return null;
-            const price = Math.max(0, Number(v?.price ?? editingProduct?.basePrice ?? 0));
-            return { name, price, categoria_id, talla_id: Number(tId), stockb2b: b2b, stockweb: web, stockml: ml };
+            const price = Math.max(
+              0,
+              Number(v?.price ?? editingProduct?.basePrice ?? 0)
+            );
+            return {
+              name,
+              price,
+              categoria_id,
+              talla_id: Number(tId),
+              stockb2b: b2b,
+              stockweb: web,
+              stockml: ml,
+            };
           })
           .filter(Boolean) as any[];
 
-        if (!rows.length) return toast.error('Ingresa stock en al menos una talla.');
+        if (!rows.length)
+          return toast.error("Ingresa stock en al menos una talla.");
 
-        const { data, error } = await supabase.from('productos').insert(rows).select();
+        const { data, error } = await supabase
+          .from("productos")
+          .insert(rows)
+          .select();
         if (error || !data) {
           console.error(error);
-          return toastAndLog('No se pudieron crear los productos.', 'error');
+          return toastAndLog("No se pudieron crear los productos.", "error");
         }
 
         // Woo best-effort
@@ -456,18 +588,20 @@ export const StockManager = () => {
                 name: row.name,
                 price: Number(row.price || 0),
                 initialStockWeb: Number(row.stockweb || 0),
-              }).then(() => wooPushStockLocal(String(row.sku), Number(row.stockweb || 0))),
-            ),
+              }).then(() =>
+                wooPushStockLocal(String(row.sku), Number(row.stockweb || 0))
+              )
+            )
           );
         } catch {
           /* ignore */
         }
 
-        toastAndLog(`Creadas ${rows.length} talla(s).`, 'sync');
+        toastAndLog(`Creadas ${rows.length} talla(s).`, "sync");
       }
     } catch (err) {
-      console.error('Error en saveProduct:', err);
-      toastAndLog('Error en la operación.', 'error');
+      console.error("Error en saveProduct:", err);
+      toastAndLog("Error en la operación.", "error");
     } finally {
       setShowModal(false);
       setEditingProduct(null);
@@ -479,23 +613,35 @@ export const StockManager = () => {
 
   const selectedCatName = useMemo(() => {
     const id = Number(editingProduct?.categoria_id || 0);
-    return cats.find((c) => c.id === id)?.name || '';
+    return cats.find((c) => c.id === id)?.name || "";
   }, [editingProduct?.categoria_id, cats]);
 
   const tallaOptions = useMemo(() => {
-    const esPantalon = selectedCatName.toLowerCase() === 'pantalones';
+    const esPantalon = selectedCatName.toLowerCase() === "pantalones";
     return tallas
-      .filter((t) => (esPantalon ? t.tipo === 'numerica' : t.tipo === 'alfanumerica'))
+      .filter((t) =>
+        esPantalon ? t.tipo === "numerica" : t.tipo === "alfanumerica"
+      )
       .sort((a, b) => {
-        if (a.tipo === 'numerica' && b.tipo === 'numerica') return (a.orden ?? 0) - (b.orden ?? 0);
+        if (a.tipo === "numerica" && b.tipo === "numerica")
+          return (a.orden ?? 0) - (b.orden ?? 0);
         return ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta);
       });
   }, [tallas, selectedCatName]);
 
-  if (loading) return <div className="text-center py-12 text-neutral-500">Cargando datos...</div>;
+  if (loading)
+    return (
+      <div className="text-center py-12 text-neutral-500">
+        Cargando datos...
+      </div>
+    );
 
   const channelBadge = (ch: Channel) =>
-    ch === 'B2B' ? 'bg-fuchsia-100 text-fuchsia-700' : ch === 'Web' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700';
+    ch === "B2B"
+      ? "bg-fuchsia-100 text-fuchsia-700"
+      : ch === "Web"
+      ? "bg-blue-100 text-blue-700"
+      : "bg-amber-100 text-amber-700";
 
   return (
     <div className="space-y-6">
@@ -504,7 +650,12 @@ export const StockManager = () => {
         <div>
           <h2 className="text-2xl font-bold">Gestión de Inventario</h2>
           <p className="text-sm text-neutral-600">
-            Última sync: {lastUpdate} {tableBusy && <span className="ml-2 text-xs text-neutral-400">(actualizando…)</span>}
+            Última sync: {lastUpdate}{" "}
+            {tableBusy && (
+              <span className="ml-2 text-xs text-neutral-400">
+                (actualizando…)
+              </span>
+            )}
           </p>
         </div>
 
@@ -518,7 +669,11 @@ export const StockManager = () => {
           />
           <select
             value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+            onChange={(e) =>
+              setCategoryFilter(
+                e.target.value === "all" ? "all" : Number(e.target.value)
+              )
+            }
             className="border rounded px-3 py-2"
           >
             <option value="all">Todas las categorías</option>
@@ -532,14 +687,14 @@ export const StockManager = () => {
           <button
             onClick={() => {
               setEditingProduct({
-                sku: '',
-                name: '',
-                price: '',
-                categoria_id: '',
-                talla_id: '',
-                stockb2b: '',
-                stockweb: '',
-                stockml: '',
+                sku: "",
+                name: "",
+                price: "",
+                categoria_id: "",
+                talla_id: "",
+                stockb2b: "",
+                stockweb: "",
+                stockml: "",
               });
               setIsExistingSKU(false);
               setEditingFamily(null);
@@ -555,7 +710,10 @@ export const StockManager = () => {
       {/* Acciones eliminar (opcional) */}
       {selectedIds.length > 0 && (
         <div>
-          <button onClick={deleteSelected} className="bg-red-600 text-white px-4 py-2 rounded flex items-center gap-2">
+          <button
+            onClick={deleteSelected}
+            className="bg-red-600 text-white px-4 py-2 rounded flex items-center gap-2"
+          >
             <Trash2 size={16} /> Eliminar seleccionados ({selectedIds.length})
           </button>
         </div>
@@ -566,14 +724,20 @@ export const StockManager = () => {
         <table className="w-full">
           <thead>
             <tr className="border-b bg-neutral-50">
-              <th className="text-left py-3 px-4 text-sm font-semibold">Nombre</th>
+              <th className="text-left py-3 px-4 text-sm font-semibold">
+                Nombre
+              </th>
               <th className="text-center py-3 px-4 text-sm font-semibold">
                 <div className="flex flex-col items-center">
                   <span>Matriz de tallas</span>
-                  <span className="text-[11px] text-neutral-500 font-normal">(B2B / Web / ML)</span>
+                  <span className="text-[11px] text-neutral-500 font-normal">
+                    (B2B / Web / ML)
+                  </span>
                 </div>
               </th>
-              <th className="text-center py-3 px-4 text-sm font-semibold align-middle">Total</th>
+              <th className="text-center py-3 px-4 text-sm font-semibold align-middle">
+                Total
+              </th>
             </tr>
           </thead>
 
@@ -581,8 +745,12 @@ export const StockManager = () => {
             {pageFams.map((fam, idx) => {
               const cols = columnsForFam(fam);
               const totalFam = Object.values(fam.byTalla).reduce(
-                (acc, p) => acc + (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0),
-                0,
+                (acc, p) =>
+                  acc +
+                  (p.stockb2b || 0) +
+                  (p.stockweb || 0) +
+                  (p.stockml || 0),
+                0
               );
 
               return (
@@ -590,7 +758,9 @@ export const StockManager = () => {
                   {/* Nombre / categoría / tipo + ✏️ */}
                   <td className="py-3 px-4 w-64">
                     <div className="font-semibold">{fam.name}</div>
-                    <div className="text-xs text-neutral-500">{fam.categoria_id ? catById[fam.categoria_id] : ''}</div>
+                    <div className="text-xs text-neutral-500">
+                      {fam.categoria_id ? catById[fam.categoria_id] : ""}
+                    </div>
                     <button
                       onClick={() => openEditFamily(fam)}
                       className="mt-2 inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm"
@@ -601,22 +771,38 @@ export const StockManager = () => {
                     <div>
                       <button
                         onClick={async () => {
-                          if (!confirm(`Eliminar "${fam.name}" y todas sus tallas? Esta acción no se puede deshacer.`)) return;
+                          if (
+                            !confirm(
+                              `Eliminar "${fam.name}" y todas sus tallas? Esta acción no se puede deshacer.`
+                            )
+                          )
+                            return;
                           const items = Object.values(fam.byTalla);
                           const ids = items.map((p) => p.id);
                           const skus = items.map((p) => String(p.sku));
 
                           // Woo (best-effort)
-                          await Promise.allSettled(skus.map((s) => wooDeleteProductLocal(s)));
+                          await Promise.allSettled(
+                            skus.map((s) => wooDeleteProductLocal(s))
+                          );
 
                           // BD
-                          const { error } = await supabase.from('productos').delete().in('id', ids);
+                          const { error } = await supabase
+                            .from("productos")
+                            .delete()
+                            .in("id", ids);
                           if (error) {
                             console.error(error);
-                            toastAndLog('No se pudo eliminar el producto.', 'error');
+                            toastAndLog(
+                              "No se pudo eliminar el producto.",
+                              "error"
+                            );
                             return;
                           }
-                          toastAndLog(`Producto "${fam.name}" eliminado (${ids.length} talla(s)).`, 'sync');
+                          toastAndLog(
+                            `Producto "${fam.name}" eliminado (${ids.length} talla(s)).`,
+                            "sync"
+                          );
                           fetchProducts({ silent: true });
                         }}
                         className="mt-1 inline-flex items-center gap-2 text-red-600 hover:text-red-800 text-sm"
@@ -632,12 +818,17 @@ export const StockManager = () => {
                     <div className="overflow-x-auto" style={{ minWidth: 360 }}>
                       <div
                         className="grid gap-y-2 gap-x-2 items-center"
-                        style={{ gridTemplateColumns: `120px repeat(${cols.length}, minmax(72px, 1fr))` }}
+                        style={{
+                          gridTemplateColumns: `120px repeat(${cols.length}, minmax(72px, 1fr))`,
+                        }}
                       >
                         {/* encabezados tallas */}
                         <div></div>
                         {cols.map((t) => (
-                          <div key={t.id} className="text-center text-lg text-neutral-700 font-medium">
+                          <div
+                            key={t.id}
+                            className="text-center text-lg text-neutral-700 font-medium"
+                          >
                             {t.etiqueta}
                           </div>
                         ))}
@@ -645,7 +836,13 @@ export const StockManager = () => {
                         {/* filas por canal */}
                         {/* B2B */}
                         <div className="text-right pr-2">
-                          <span className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge('B2B')}`}>B2B</span>
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge(
+                              "B2B"
+                            )}`}
+                          >
+                            B2B
+                          </span>
                         </div>
                         {cols.map((t) => {
                           const p = fam.byTalla[t.id];
@@ -653,14 +850,22 @@ export const StockManager = () => {
                           const cls = getStockStatusClass(val);
                           return (
                             <div key={t.id} className="text-center">
-                              <span className={`font-semibold ${cls}`}>{val}</span>
+                              <span className={`font-semibold ${cls}`}>
+                                {val}
+                              </span>
                             </div>
                           );
                         })}
 
                         {/* Web */}
                         <div className="text-right pr-2">
-                          <span className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge('Web')}`}>Web</span>
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge(
+                              "Web"
+                            )}`}
+                          >
+                            Web
+                          </span>
                         </div>
                         {cols.map((t) => {
                           const p = fam.byTalla[t.id];
@@ -668,14 +873,22 @@ export const StockManager = () => {
                           const cls = getStockStatusClass(val);
                           return (
                             <div key={t.id} className="text-center">
-                              <span className={`font-semibold ${cls}`}>{val}</span>
+                              <span className={`font-semibold ${cls}`}>
+                                {val}
+                              </span>
                             </div>
                           );
                         })}
 
                         {/* ML */}
                         <div className="text-right pr-2">
-                          <span className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge('ML')}`}>ML</span>
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge(
+                              "ML"
+                            )}`}
+                          >
+                            ML
+                          </span>
                         </div>
                         {cols.map((t) => {
                           const p = fam.byTalla[t.id];
@@ -683,36 +896,47 @@ export const StockManager = () => {
                           const cls = getStockStatusClass(val);
                           return (
                             <div key={t.id} className="text-center">
-                              <span className={`font-semibold ${cls}`}>{val}</span>
+                              <span className={`font-semibold ${cls}`}>
+                                {val}
+                              </span>
                             </div>
                           );
                         })}
 
                         {/* TOTAL */}
                         <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">Total</span>
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">
+                            Total
+                          </span>
                         </div>
                         {cols.map((t) => {
                           const p = fam.byTalla[t.id];
-                          const total = (p?.stockb2b ?? 0) + (p?.stockweb ?? 0) + (p?.stockml ?? 0);
+                          const total =
+                            (p?.stockb2b ?? 0) +
+                            (p?.stockweb ?? 0) +
+                            (p?.stockml ?? 0);
                           const cls = getStockStatusClass(total);
                           return (
                             <div key={t.id} className="text-center">
-                              <span className={`font-semibold ${cls}`}>{total}</span>
+                              <span className={`font-semibold ${cls}`}>
+                                {total}
+                              </span>
                             </div>
                           );
                         })}
 
                         {/* PRECIO */}
                         <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-sm font-semibold bg-green-100 text-green-700">Precio</span>
+                          <span className="px-2 py-1 rounded text-sm font-semibold bg-green-100 text-green-700">
+                            Precio
+                          </span>
                         </div>
                         {cols.map((t) => {
                           const p = fam.byTalla[t.id];
                           const price = Number(p?.price ?? 0);
                           return (
                             <div key={t.id} className="text-center text-sm">
-                              {price ? formatPrice(price) : '—'}
+                              {price ? formatPrice(price) : "—"}
                             </div>
                           );
                         })}
@@ -721,7 +945,9 @@ export const StockManager = () => {
                   </td>
 
                   <td className="py-4 px-4 text-center align-middle">
-                    <div className="text-lg font-bold text-neutral-800">{totalFam}</div>
+                    <div className="text-lg font-bold text-neutral-800">
+                      {totalFam}
+                    </div>
                   </td>
                 </tr>
               );
@@ -741,12 +967,17 @@ export const StockManager = () => {
       {/* Paginación de familias */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div className="text-sm text-neutral-600">
-          Mostrando <strong>{showingFrom}</strong>–<strong>{showingTo}</strong> de <strong>{totalFamilies}</strong> familias
+          Mostrando <strong>{showingFrom}</strong>–<strong>{showingTo}</strong>{" "}
+          de <strong>{totalFamilies}</strong> familias
         </div>
 
         <div className="flex items-center gap-2">
           <span className="text-sm text-neutral-600">Filas por página:</span>
-          <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} className="border rounded px-2 py-1 text-sm">
+          <select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            className="border rounded px-2 py-1 text-sm"
+          >
             {[10, 20, 30, 50, 100].map((n) => (
               <option key={n} value={n}>
                 {n}
@@ -755,19 +986,35 @@ export const StockManager = () => {
           </select>
 
           <div className="flex items-center gap-1 ml-2">
-            <button className="border rounded p-1 disabled:opacity-50" onClick={goFirst} disabled={page === 1}>
+            <button
+              className="border rounded p-1 disabled:opacity-50"
+              onClick={goFirst}
+              disabled={page === 1}
+            >
               <ChevronsLeft size={16} />
             </button>
-            <button className="border rounded p-1 disabled:opacity-50" onClick={goPrev} disabled={page === 1}>
+            <button
+              className="border rounded p-1 disabled:opacity-50"
+              onClick={goPrev}
+              disabled={page === 1}
+            >
               <ChevronLeft size={16} />
             </button>
             <span className="mx-2 text-sm">
               Página <strong>{page}</strong> de <strong>{totalPages}</strong>
             </span>
-            <button className="border rounded p-1 disabled:opacity-50" onClick={goNext} disabled={page === totalPages}>
+            <button
+              className="border rounded p-1 disabled:opacity-50"
+              onClick={goNext}
+              disabled={page === totalPages}
+            >
               <ChevronRight size={16} />
             </button>
-            <button className="border rounded p-1 disabled:opacity-50" onClick={goLast} disabled={page === totalPages}>
+            <button
+              className="border rounded p-1 disabled:opacity-50"
+              onClick={goLast}
+              disabled={page === totalPages}
+            >
               <ChevronsRight size={16} />
             </button>
           </div>
@@ -790,7 +1037,11 @@ export const StockManager = () => {
               <X size={18} />
             </button>
 
-            <h3 className="text-lg font-semibold mb-3">{isExistingSKU ? 'Editar stock por tallas' : 'Agregar producto nuevo'}</h3>
+            <h3 className="text-lg font-semibold mb-3">
+              {isExistingSKU
+                ? "Editar stock por tallas"
+                : "Agregar producto nuevo"}
+            </h3>
 
             {/* MODO EDITAR: MATRIZ */}
             {isExistingSKU && editingFamily && (
@@ -799,11 +1050,16 @@ export const StockManager = () => {
                   <strong>Producto:</strong> {editingFamily.name}
                 </div>
                 <div className="mb-2 text-sm text-neutral-600">
-                  <strong>Categoría:</strong> {editingFamily.categoria_id ? catById[editingFamily.categoria_id] : '—'}
+                  <strong>Categoría:</strong>{" "}
+                  {editingFamily.categoria_id
+                    ? catById[editingFamily.categoria_id]
+                    : "—"}
                 </div>
 
                 <div className="mb-3 text-sm">
-                  <label className="block text-neutral-600 mb-1">Precio base (se usará al crear tallas nuevas)</label>
+                  <label className="block text-neutral-600 mb-1">
+                    Precio base (se usará al crear tallas nuevas)
+                  </label>
                   <input
                     type="text"
                     inputMode="numeric"
@@ -813,44 +1069,68 @@ export const StockManager = () => {
                       const el = e.currentTarget;
                       const start = el.selectionStart ?? el.value.length;
                       const end = el.selectionEnd ?? el.value.length;
-                      const data = (e as any).data ?? '';
-                      const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                      const data = (e as any).data ?? "";
+                      const proposed =
+                        el.value.slice(0, start) + data + el.value.slice(end);
                       if (!/^\d*$/.test(proposed)) e.preventDefault();
                     }}
                     onPaste={(e) => {
-                      const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                      const paste = (
+                        e.clipboardData || (window as any).clipboardData
+                      ).getData("text");
                       if (!/^\d*$/.test(paste)) e.preventDefault();
                     }}
                     onChange={(e) =>
-                      setEditingFamily((prev) => (prev ? { ...prev, basePrice: Number(e.target.value || 0) } : prev))
+                      setEditingFamily((prev) =>
+                        prev
+                          ? { ...prev, basePrice: Number(e.target.value || 0) }
+                          : prev
+                      )
                     }
                   />
                 </div>
 
                 <div className="mb-3 text-[11px] text-neutral-500">
-                  Edita el stock <strong>absoluto</strong> por talla y canal. El precio se puede ajustar por talla.
+                  Edita el stock <strong>absoluto</strong> por talla y canal. El
+                  precio se puede ajustar por talla.
                 </div>
 
                 <div className="overflow-x-auto" style={{ minWidth: 480 }}>
                   <div
                     className="grid gap-y-2 gap-x-2 items-center"
-                    style={{ gridTemplateColumns: `120px repeat(${editingFamily.cols.length}, minmax(72px, 1fr))` }}
+                    style={{
+                      gridTemplateColumns: `120px repeat(${editingFamily.cols.length}, minmax(72px, 1fr))`,
+                    }}
                   >
                     <div></div>
                     {editingFamily.cols.map((t) => (
-                      <div key={t.id} className="text-center text-xs text-neutral-700 font-medium">
+                      <div
+                        key={t.id}
+                        className="text-center text-xs text-neutral-700 font-medium"
+                      >
                         {t.etiqueta}
                       </div>
                     ))}
 
-                    {(['B2B', 'Web', 'ML'] as const).map((label) => (
+                    {(["B2B", "Web", "ML"] as const).map((label) => (
                       <div className="contents" key={label}>
                         <div className="text-right pr-2">
-                          <span className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge(label)}`}>{label}</span>
+                          <span
+                            className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge(
+                              label
+                            )}`}
+                          >
+                            {label}
+                          </span>
                         </div>
                         {editingFamily.cols.map((t) => {
                           const v = editingFamily.values[t.id];
-                          const field = label === 'B2B' ? 'b2b' : label === 'Web' ? 'web' : 'ml';
+                          const field =
+                            label === "B2B"
+                              ? "b2b"
+                              : label === "Web"
+                              ? "web"
+                              : "ml";
                           const value = (v as any)?.[field] ?? 0;
                           const disabled = !v?.id; // si no existe aún esa talla en BD
                           return (
@@ -859,29 +1139,51 @@ export const StockManager = () => {
                                 type="text"
                                 inputMode="numeric"
                                 className="w-full border rounded px-2 py-1 text-center"
-                                value={disabled ? '' : String(value)}
-                                placeholder={disabled ? '—' : '0'}
+                                value={disabled ? "" : String(value)}
+                                placeholder={disabled ? "—" : "0"}
                                 disabled={disabled}
                                 onBeforeInput={(e) => {
                                   const el = e.currentTarget;
-                                  const start = el.selectionStart ?? el.value.length;
-                                  const end = el.selectionEnd ?? el.value.length;
-                                  const data = (e as any).data ?? '';
-                                  const proposed = el.value.slice(0, start) + data + el.value.slice(end);
-                                  if (!/^\d*$/.test(proposed)) e.preventDefault();
+                                  const start =
+                                    el.selectionStart ?? el.value.length;
+                                  const end =
+                                    el.selectionEnd ?? el.value.length;
+                                  const data = (e as any).data ?? "";
+                                  const proposed =
+                                    el.value.slice(0, start) +
+                                    data +
+                                    el.value.slice(end);
+                                  if (!/^\d*$/.test(proposed))
+                                    e.preventDefault();
                                 }}
                                 onPaste={(e) => {
-                                  const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                                  const paste = (
+                                    e.clipboardData ||
+                                    (window as any).clipboardData
+                                  ).getData("text");
                                   if (!/^\d*$/.test(paste)) e.preventDefault();
                                 }}
                                 onChange={(e) => {
-                                  const n = e.target.value === '' ? 0 : Number(e.target.value.replace(/[^\d]/g, ''));
+                                  const n =
+                                    e.target.value === ""
+                                      ? 0
+                                      : Number(
+                                          e.target.value.replace(/[^\d]/g, "")
+                                        );
                                   setEditingFamily((prev) => {
                                     if (!prev) return prev;
-                                    const cur = prev.values[t.id] || { b2b: 0, web: 0, ml: 0, price: prev.basePrice ?? 0 };
+                                    const cur = prev.values[t.id] || {
+                                      b2b: 0,
+                                      web: 0,
+                                      ml: 0,
+                                      price: prev.basePrice ?? 0,
+                                    };
                                     return {
                                       ...prev,
-                                      values: { ...prev.values, [t.id]: { ...cur, [field]: n } },
+                                      values: {
+                                        ...prev.values,
+                                        [t.id]: { ...cur, [field]: n },
+                                      },
                                     };
                                   });
                                 }}
@@ -894,26 +1196,35 @@ export const StockManager = () => {
 
                     {/* TOTAL (solo lectura) */}
                     <div className="text-right pr-2">
-                      <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">Total</span>
+                      <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">
+                        Total
+                      </span>
                     </div>
                     {editingFamily.cols.map((t) => {
                       const v = editingFamily.values[t.id];
-                      const total = (v?.b2b ?? 0) + (v?.web ?? 0) + (v?.ml ?? 0);
+                      const total =
+                        (v?.b2b ?? 0) + (v?.web ?? 0) + (v?.ml ?? 0);
                       const cls = getStockStatusClass(total);
                       return (
                         <div key={t.id} className="text-center">
-                          <span className={`font-semibold ${cls}`}>{total}</span>
+                          <span className={`font-semibold ${cls}`}>
+                            {total}
+                          </span>
                         </div>
                       );
                     })}
 
                     {/* PRECIO (editable siempre) */}
                     <div className="text-right pr-2">
-                      <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">Precio</span>
+                      <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">
+                        Precio
+                      </span>
                     </div>
                     {editingFamily.cols.map((t) => {
                       const v = editingFamily.values[t.id];
-                      const value = Number(v?.price ?? editingFamily.basePrice ?? 0);
+                      const value = Number(
+                        v?.price ?? editingFamily.basePrice ?? 0
+                      );
                       return (
                         <div key={t.id} className="text-center">
                           <input
@@ -923,22 +1234,41 @@ export const StockManager = () => {
                             value={String(value || 0)}
                             onBeforeInput={(e) => {
                               const el = e.currentTarget;
-                              const start = el.selectionStart ?? el.value.length;
+                              const start =
+                                el.selectionStart ?? el.value.length;
                               const end = el.selectionEnd ?? el.value.length;
-                              const data = (e as any).data ?? '';
-                              const proposed = el.value.slice(0, start) + data + el.value.slice(end);
+                              const data = (e as any).data ?? "";
+                              const proposed =
+                                el.value.slice(0, start) +
+                                data +
+                                el.value.slice(end);
                               if (!/^\d*$/.test(proposed)) e.preventDefault();
                             }}
                             onPaste={(e) => {
-                              const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                              const paste = (
+                                e.clipboardData || (window as any).clipboardData
+                              ).getData("text");
                               if (!/^\d*$/.test(paste)) e.preventDefault();
                             }}
                             onChange={(e) => {
-                              const n = Number((e.target.value || '0').replace(/[^\d]/g, ''));
+                              const n = Number(
+                                (e.target.value || "0").replace(/[^\d]/g, "")
+                              );
                               setEditingFamily((prev) => {
                                 if (!prev) return prev;
-                                const cur = prev.values[t.id] || { b2b: 0, web: 0, ml: 0, price: 0 };
-                                return { ...prev, values: { ...prev.values, [t.id]: { ...cur, price: n } } };
+                                const cur = prev.values[t.id] || {
+                                  b2b: 0,
+                                  web: 0,
+                                  ml: 0,
+                                  price: 0,
+                                };
+                                return {
+                                  ...prev,
+                                  values: {
+                                    ...prev.values,
+                                    [t.id]: { ...cur, price: n },
+                                  },
+                                };
                               });
                             }}
                           />
@@ -955,22 +1285,33 @@ export const StockManager = () => {
               <>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm text-neutral-600 mb-1">Nombre</label>
+                    <label className="block text-sm text-neutral-600 mb-1">
+                      Nombre
+                    </label>
                     <input
                       type="text"
-                      value={editingProduct?.name || ''}
-                      onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
+                      value={editingProduct?.name || ""}
+                      onChange={(e) =>
+                        setEditingProduct({
+                          ...editingProduct,
+                          name: e.target.value,
+                        })
+                      }
                       className="w-full border rounded px-3 py-2"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-neutral-600 mb-1">Categoría</label>
+                    <label className="block text-sm text-neutral-600 mb-1">
+                      Categoría
+                    </label>
                     <select
-                      value={editingProduct?.categoria_id ?? ''}
+                      value={editingProduct?.categoria_id ?? ""}
                       onChange={(e) =>
                         setEditingProduct({
                           ...editingProduct,
-                          categoria_id: e.target.value ? Number(e.target.value) : '',
+                          categoria_id: e.target.value
+                            ? Number(e.target.value)
+                            : "",
                         })
                       }
                       className="w-full border rounded px-3 py-2"
@@ -986,7 +1327,9 @@ export const StockManager = () => {
                 </div>
 
                 <div className="mt-3">
-                  <label className="block text-sm text-neutral-600 mb-1">Precio base</label>
+                  <label className="block text-sm text-neutral-600 mb-1">
+                    Precio base
+                  </label>
                   <input
                     type="text"
                     inputMode="numeric"
@@ -996,57 +1339,99 @@ export const StockManager = () => {
                       const el = e.currentTarget;
                       const s = el.selectionStart ?? el.value.length;
                       const en = el.selectionEnd ?? el.value.length;
-                      const d = (e as any).data ?? '';
+                      const d = (e as any).data ?? "";
                       const p = el.value.slice(0, s) + d + el.value.slice(en);
                       if (!/^\d*$/.test(p)) e.preventDefault();
                     }}
                     onPaste={(e) => {
-                      const t = (e.clipboardData || (window as any).clipboardData).getData('text');
+                      const t = (
+                        e.clipboardData || (window as any).clipboardData
+                      ).getData("text");
                       if (!/^\d*$/.test(t)) e.preventDefault();
                     }}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, basePrice: Number(e.target.value || 0) })}
+                    onChange={(e) =>
+                      setEditingProduct({
+                        ...editingProduct,
+                        basePrice: Number(e.target.value || 0),
+                      })
+                    }
                   />
                 </div>
 
                 {/* MATRIZ CREAR */}
                 <div className="mt-4 overflow-x-auto" style={{ minWidth: 480 }}>
                   {(() => {
-                    const catName = cats.find((c) => c.id === Number(editingProduct?.categoria_id))?.name?.toLowerCase() || '';
-                    const tipo: 'alfanumerica' | 'numerica' = catName === 'pantalones' ? 'numerica' : 'alfanumerica';
+                    const catName =
+                      cats
+                        .find(
+                          (c) => c.id === Number(editingProduct?.categoria_id)
+                        )
+                        ?.name?.toLowerCase() || "";
+                    const tipo: "alfanumerica" | "numerica" =
+                      catName === "pantalones" ? "numerica" : "alfanumerica";
                     const cols = tallas
                       .filter((t) => t.tipo === tipo)
                       .sort((a, b) =>
-                        tipo === 'numerica' ? (a.orden ?? 0) - (b.orden ?? 0) : ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta),
+                        tipo === "numerica"
+                          ? (a.orden ?? 0) - (b.orden ?? 0)
+                          : ALFA_ORDER.indexOf(a.etiqueta) -
+                            ALFA_ORDER.indexOf(b.etiqueta)
                       );
 
                     // estado local de la matriz de creación
                     if (!editingProduct?.matrix) {
-                      const init: Record<number, { b2b: number; web: number; ml: number; price: number }> = {};
+                      const init: Record<
+                        number,
+                        { b2b: number; web: number; ml: number; price: number }
+                      > = {};
                       cols.forEach((t) => {
-                        init[t.id] = { b2b: 0, web: 0, ml: 0, price: Number(editingProduct?.basePrice || 0) };
+                        init[t.id] = {
+                          b2b: 0,
+                          web: 0,
+                          ml: 0,
+                          price: Number(editingProduct?.basePrice || 0),
+                        };
                       });
                       setEditingProduct((p: any) => ({ ...p, matrix: init }));
                     }
 
-                    const setVal = (tId: number, field: 'b2b' | 'web' | 'ml' | 'price', val: string) => {
-                      const n = Number((val || '0').replace(/[^\d]/g, ''));
-                      setEditingProduct((p: any) => ({ ...p, matrix: { ...p.matrix, [tId]: { ...p.matrix[tId], [field]: n } } }));
+                    const setVal = (
+                      tId: number,
+                      field: "b2b" | "web" | "ml" | "price",
+                      val: string
+                    ) => {
+                      const n = Number((val || "0").replace(/[^\d]/g, ""));
+                      setEditingProduct((p: any) => ({
+                        ...p,
+                        matrix: {
+                          ...p.matrix,
+                          [tId]: { ...p.matrix[tId], [field]: n },
+                        },
+                      }));
                     };
 
                     const gridTemplateColumns = `120px repeat(${cols.length}, minmax(72px, 1fr))`;
 
                     return (
-                      <div className="grid gap-y-2 gap-x-2 items-center" style={{ gridTemplateColumns }}>
+                      <div
+                        className="grid gap-y-2 gap-x-2 items-center"
+                        style={{ gridTemplateColumns }}
+                      >
                         <div></div>
                         {cols.map((t) => (
-                          <div key={t.id} className="text-center text-xs text-neutral-700 font-medium">
+                          <div
+                            key={t.id}
+                            className="text-center text-xs text-neutral-700 font-medium"
+                          >
                             {t.etiqueta}
                           </div>
                         ))}
 
                         {/* B2B */}
                         <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-fuchsia-100 text-fuchsia-700">B2B</span>
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-fuchsia-100 text-fuchsia-700">
+                            B2B
+                          </span>
                         </div>
                         {cols.map((t) => (
                           <div key={t.id} className="text-center">
@@ -1054,27 +1439,37 @@ export const StockManager = () => {
                               type="text"
                               inputMode="numeric"
                               className="w-full border rounded px-2 py-1 text-center"
-                              value={String(editingProduct?.matrix?.[t.id]?.b2b ?? 0)}
+                              value={String(
+                                editingProduct?.matrix?.[t.id]?.b2b ?? 0
+                              )}
                               onBeforeInput={(e) => {
                                 const el = e.currentTarget;
                                 const s = el.selectionStart ?? el.value.length;
                                 const en = el.selectionEnd ?? el.value.length;
-                                const d = (e as any).data ?? '';
-                                const p = el.value.slice(0, s) + d + el.value.slice(en);
+                                const d = (e as any).data ?? "";
+                                const p =
+                                  el.value.slice(0, s) + d + el.value.slice(en);
                                 if (!/^\d*$/.test(p)) e.preventDefault();
                               }}
                               onPaste={(e) => {
-                                const t = (e.clipboardData || (window as any).clipboardData).getData('text');
+                                const t = (
+                                  e.clipboardData ||
+                                  (window as any).clipboardData
+                                ).getData("text");
                                 if (!/^\d*$/.test(t)) e.preventDefault();
                               }}
-                              onChange={(e) => setVal(t.id, 'b2b', e.target.value)}
+                              onChange={(e) =>
+                                setVal(t.id, "b2b", e.target.value)
+                              }
                             />
                           </div>
                         ))}
 
                         {/* Web */}
                         <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-blue-100 text-blue-700">Web</span>
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-blue-100 text-blue-700">
+                            Web
+                          </span>
                         </div>
                         {cols.map((t) => (
                           <div key={t.id} className="text-center">
@@ -1082,27 +1477,37 @@ export const StockManager = () => {
                               type="text"
                               inputMode="numeric"
                               className="w-full border rounded px-2 py-1 text-center"
-                              value={String(editingProduct?.matrix?.[t.id]?.web ?? 0)}
+                              value={String(
+                                editingProduct?.matrix?.[t.id]?.web ?? 0
+                              )}
                               onBeforeInput={(e) => {
                                 const el = e.currentTarget;
                                 const s = el.selectionStart ?? el.value.length;
                                 const en = el.selectionEnd ?? el.value.length;
-                                const d = (e as any).data ?? '';
-                                const p = el.value.slice(0, s) + d + el.value.slice(en);
+                                const d = (e as any).data ?? "";
+                                const p =
+                                  el.value.slice(0, s) + d + el.value.slice(en);
                                 if (!/^\d*$/.test(p)) e.preventDefault();
                               }}
                               onPaste={(e) => {
-                                const t = (e.clipboardData || (window as any).clipboardData).getData('text');
+                                const t = (
+                                  e.clipboardData ||
+                                  (window as any).clipboardData
+                                ).getData("text");
                                 if (!/^\d*$/.test(t)) e.preventDefault();
                               }}
-                              onChange={(e) => setVal(t.id, 'web', e.target.value)}
+                              onChange={(e) =>
+                                setVal(t.id, "web", e.target.value)
+                              }
                             />
                           </div>
                         ))}
 
                         {/* ML */}
                         <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-amber-100 text-amber-700">ML</span>
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-amber-100 text-amber-700">
+                            ML
+                          </span>
                         </div>
                         {cols.map((t) => (
                           <div key={t.id} className="text-center">
@@ -1110,42 +1515,61 @@ export const StockManager = () => {
                               type="text"
                               inputMode="numeric"
                               className="w-full border rounded px-2 py-1 text-center"
-                              value={String(editingProduct?.matrix?.[t.id]?.ml ?? 0)}
+                              value={String(
+                                editingProduct?.matrix?.[t.id]?.ml ?? 0
+                              )}
                               onBeforeInput={(e) => {
                                 const el = e.currentTarget;
                                 const s = el.selectionStart ?? el.value.length;
                                 const en = el.selectionEnd ?? el.value.length;
-                                const d = (e as any).data ?? '';
-                                const p = el.value.slice(0, s) + d + el.value.slice(en);
+                                const d = (e as any).data ?? "";
+                                const p =
+                                  el.value.slice(0, s) + d + el.value.slice(en);
                                 if (!/^\d*$/.test(p)) e.preventDefault();
                               }}
                               onPaste={(e) => {
-                                const t = (e.clipboardData || (window as any).clipboardData).getData('text');
+                                const t = (
+                                  e.clipboardData ||
+                                  (window as any).clipboardData
+                                ).getData("text");
                                 if (!/^\d*$/.test(t)) e.preventDefault();
                               }}
-                              onChange={(e) => setVal(t.id, 'ml', e.target.value)}
+                              onChange={(e) =>
+                                setVal(t.id, "ml", e.target.value)
+                              }
                             />
                           </div>
                         ))}
 
                         {/* TOTAL (solo lectura) */}
                         <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">Total</span>
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">
+                            Total
+                          </span>
                         </div>
                         {cols.map((t) => {
-                          const v = editingProduct?.matrix?.[t.id] || { b2b: 0, web: 0, ml: 0 };
-                          const total = (v.b2b || 0) + (v.web || 0) + (v.ml || 0);
+                          const v = editingProduct?.matrix?.[t.id] || {
+                            b2b: 0,
+                            web: 0,
+                            ml: 0,
+                          };
+                          const total =
+                            (v.b2b || 0) + (v.web || 0) + (v.ml || 0);
                           const cls = getStockStatusClass(total);
                           return (
                             <div key={t.id} className="text-center">
-                              <span className={`font-semibold ${cls}`}>{total}</span>
+                              <span className={`font-semibold ${cls}`}>
+                                {total}
+                              </span>
                             </div>
                           );
                         })}
 
                         {/* PRECIO */}
                         <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">Precio</span>
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">
+                            Precio
+                          </span>
                         </div>
                         {cols.map((t) => (
                           <div key={t.id} className="text-center">
@@ -1153,20 +1577,30 @@ export const StockManager = () => {
                               type="text"
                               inputMode="numeric"
                               className="w-full border rounded px-2 py-1 text-center"
-                              value={String(editingProduct?.matrix?.[t.id]?.price ?? editingProduct?.basePrice ?? 0)}
+                              value={String(
+                                editingProduct?.matrix?.[t.id]?.price ??
+                                  editingProduct?.basePrice ??
+                                  0
+                              )}
                               onBeforeInput={(e) => {
                                 const el = e.currentTarget;
                                 const s = el.selectionStart ?? el.value.length;
                                 const en = el.selectionEnd ?? el.value.length;
-                                const d = (e as any).data ?? '';
-                                const p = el.value.slice(0, s) + d + el.value.slice(en);
+                                const d = (e as any).data ?? "";
+                                const p =
+                                  el.value.slice(0, s) + d + el.value.slice(en);
                                 if (!/^\d*$/.test(p)) e.preventDefault();
                               }}
                               onPaste={(e) => {
-                                const t = (e.clipboardData || (window as any).clipboardData).getData('text');
+                                const t = (
+                                  e.clipboardData ||
+                                  (window as any).clipboardData
+                                ).getData("text");
                                 if (!/^\d*$/.test(t)) e.preventDefault();
                               }}
-                              onChange={(e) => setVal(t.id, 'price', e.target.value)}
+                              onChange={(e) =>
+                                setVal(t.id, "price", e.target.value)
+                              }
                             />
                           </div>
                         ))}
@@ -1178,8 +1612,11 @@ export const StockManager = () => {
             )}
 
             <div className="mt-4 flex gap-2">
-              <button onClick={saveProduct} className="bg-green-600 text-white px-4 py-2 rounded">
-                {isExistingSKU ? 'Guardar cambios' : 'Guardar producto'}
+              <button
+                onClick={saveProduct}
+                className="bg-green-600 text-white px-4 py-2 rounded"
+              >
+                {isExistingSKU ? "Guardar cambios" : "Guardar producto"}
               </button>
               <button
                 onClick={() => {
