@@ -1,10 +1,12 @@
 // src/data/woo.ts
 type Json = Record<string, unknown>;
 
-const URL_FROM_ENV =
-  (import.meta.env.VITE_SUPABASE_FUNCTION_WOO as string | undefined)?.replace(/\/+$/, "");
-const PROJECT_URL =
-  (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.replace(/\/+$/, "");
+const URL_FROM_ENV = (
+  import.meta.env.VITE_SUPABASE_FUNCTION_WOO as string | undefined
+)?.replace(/\/+$/, "");
+const PROJECT_URL = (
+  import.meta.env.VITE_SUPABASE_URL as string | undefined
+)?.replace(/\/+$/, "");
 
 /**
  * BASE apunta a tu edge function "woo-sync".
@@ -42,12 +44,17 @@ async function call<T = any>(path: string, opts: CallOpts = {}): Promise<T> {
   // intentamos parsear siempre para poder ver el mensaje del edge
   const text = await r.text();
   let payload: any = null;
-  try { payload = text ? JSON.parse(text) : null; } catch { payload = text; }
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = text;
+  }
 
   if (!r.ok) {
-    const msg = typeof payload === "object" && payload?.error
-      ? payload.error
-      : `HTTP ${r.status} ${r.statusText}`;
+    const msg =
+      typeof payload === "object" && payload?.error
+        ? payload.error
+        : `HTTP ${r.status} ${r.statusText}`;
     throw new Error(msg);
   }
   return payload as T;
