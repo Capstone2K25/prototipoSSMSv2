@@ -617,17 +617,18 @@ export const StockManager = () => {
   }, [editingProduct?.categoria_id, cats]);
 
   const tallaOptions = useMemo(() => {
-    const esPantalon = selectedCatName.toLowerCase() === "pantalones";
-    return tallas
-      .filter((t) =>
-        esPantalon ? t.tipo === "numerica" : t.tipo === "alfanumerica"
-      )
-      .sort((a, b) => {
-        if (a.tipo === "numerica" && b.tipo === "numerica")
-          return (a.orden ?? 0) - (b.orden ?? 0);
-        return ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta);
-      });
-  }, [tallas, selectedCatName]);
+  const name = (selectedCatName || "").toLowerCase().trim();
+  const usaNumericas = name === "pantalones" || name === "shorts";
+
+  return tallas
+    .filter((t) => (usaNumericas ? t.tipo === "numerica" : t.tipo === "alfanumerica"))
+    .sort((a, b) => {
+      if (a.tipo === "numerica" && b.tipo === "numerica") {
+        return (a.orden ?? 0) - (b.orden ?? 0);
+      }
+      return ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta);
+    });
+}, [tallas, selectedCatName]);
 
   if (loading)
     return (
@@ -1361,14 +1362,11 @@ export const StockManager = () => {
                 {/* MATRIZ CREAR */}
                 <div className="mt-4 overflow-x-auto" style={{ minWidth: 480 }}>
                   {(() => {
-                    const catName =
-                      cats
-                        .find(
-                          (c) => c.id === Number(editingProduct?.categoria_id)
-                        )
-                        ?.name?.toLowerCase() || "";
-                    const tipo: "alfanumerica" | "numerica" =
-                      catName === "pantalones" ? "numerica" : "alfanumerica";
+                    const rawCatName = cats.find((c) => c.id === Number(editingProduct?.categoria_id))?.name || "";
+const catName = rawCatName.toLowerCase().trim();
+const usaNumericas = catName === "pantalones" || catName === "shorts";
+const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumerica";
+
                     const cols = tallas
                       .filter((t) => t.tipo === tipo)
                       .sort((a, b) =>
