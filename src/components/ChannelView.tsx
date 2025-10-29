@@ -103,6 +103,7 @@ const CATEGORY_GUIDE_MAP: Record<string, string> = {
   // Gorros/Accesorios sin guía de tallas
 };
 
+
 // ¿La categoría usa guía de tallas?
 
 export const ChannelView = ({ channel }: ChannelViewProps) => {
@@ -664,28 +665,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     const gridIdToUse = forcedGuide || String(sizeGridId || "");
     let rowIdToUse = String(sizeGridRowId || "");
 
-    // Validaciones de talla/guía (sólo si la categoría usa grid)
-    if (requiresGrid(safeDraft.category_id)) {
-      if (!sizeValue) {
-        setDraftError("Debes resolver la talla (SIZE).");
-        return;
-      }
 
-      if (!/^\d+$/.test(gridIdToUse)) {
-        setDraftError(
-          `SIZE_GRID_ID inválido: "${gridIdToUse}". Debe ser sólo dígitos (ej "3947174").`
-        );
-        return;
-      }
-
-      // si el row no pertenece a la guía forzada, obliga a recomputar y bloquea el publish
-      if (!new RegExp(`^${gridIdToUse}:\\d+$`).test(rowIdToUse)) {
-        setDraftError(
-          `La fila de guía (${rowIdToUse}) no corresponde a la guía ${gridIdToUse}. Cambia la guía o vuelve a seleccionar la talla.`
-        );
-        return;
-      }
-    }
 
     // … construir atributos
     const base = (safeDraft.attributes || []).filter(
@@ -700,20 +680,67 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
         a.id !== "MAIN_MATERIAL"
     );
 
+if (requiresGrid(safeDraft.category_id)) {
+  if (!sizeValue) return setDraftError('Debes resolver la talla (SIZE).');
+
+  if (!/^\d+$/.test(String(gridIdToUse))) {
+    return setDraftError(`SIZE_GRID_ID inválido: "${gridIdToUse}". Debe ser sólo dígitos (ej "3947174").`);
+  }
+
+  if (!new RegExp(`^${gridIdToUse}:\\d+$`).test(String(sizeGridRowId))) {
+    return setDraftError(
+      `La fila de guía (${sizeGridRowId}) no corresponde a la guía ${gridIdToUse}. ` +
+      `Cambia la guía o vuelve a seleccionar la talla.`
+    );
+  }
+}
     const finalAttrs: DraftAttr[] = [...base];
 
     // SIZE + GRID (solo si aplica y son consistentes)
-    if (requiresGrid(safeDraft.category_id)) {
-      finalAttrs.push({ id: "SIZE", value_name: String(sizeValue).trim() });
-      finalAttrs.push({
-        id: "SIZE_GRID_ID",
-        value_name: String(gridIdToUse).trim(),
-      });
-      finalAttrs.push({
-        id: "SIZE_GRID_ROW_ID",
-        value_name: String(rowIdToUse).trim(),
-      });
-    }
+    // --- FASHION GRID ---
+// --- FASHION GRID ---
+// Aquí mantenemos value_name por consistencia,
+// y añadimos value_id porque ML lo exige en estos 3 atributos.
+if (requiresGrid(safeDraft.category_id)) {
+  const gridId = String(gridIdToUse).trim();       // ej: "3947174"
+  const rowId  = String(sizeGridRowId).trim();     // ej: "3947174:5"
+  const sizeVal = String(sizeValue).trim();        // ej: "42"
+
+  // Limpia duplicados por si vienen de antes
+  const drop = (id: string) => {
+    const i = finalAttrs.findIndex(a => a.id === id);
+    if (i >= 0) finalAttrs.splice(i, 1);
+  };
+  drop('SIZE'); drop('SIZE_GRID_ID'); drop('SIZE_GRID_ROW_ID');
+
+  // ✅ SIZE: mantener label humano y enviar id de fila
+  finalAttrs.push({
+    id: 'SIZE',
+    value_name: sizeVal,   // "42" o "M" (consistencia en tu sistema)
+    value_id: rowId        // "3947174:5" (requisito ML)
+  });
+
+  // ✅ SIZE_GRID_ID: número de guía
+  finalAttrs.push({
+    id: 'SIZE_GRID_ID',
+    value_name: gridId,    // lo dejamos también como string visible
+    value_id: gridId       // id numérico que valida ML
+  });
+
+  // ✅ SIZE_GRID_ROW_ID: "<GRID>:<ROW>"
+  finalAttrs.push({
+    id: 'SIZE_GRID_ROW_ID',
+    value_name: rowId,     // visible/consistente
+    value_id: rowId        // requerido por ML
+  });
+safeDraft.attributes = finalAttrs;
+console.debug(
+  "POST → meli-post payload",
+  JSON.parse(JSON.stringify(safeDraft))
+);
+  console.debug('→ FASHION GRID', { gridId, rowId, sizeVal });
+}
+
 
     // GENDER (si aplica)
     if (requiresGender(safeDraft.category_id)) {
@@ -1540,11 +1567,12 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
                     {draft.condition === "new" ? "Nuevo" : "Usado"}
                   </div>
                   <div className="text-xs text-neutral-500">
-                    Atributos:{" "}
-                    {draft.attributes
-                      .map((a) => `${a.id}=${a.value_name}`)
-                      .join(", ")}
-                  </div>
+  Atributos:{' '}
+  {draft.attributes
+    .map((a) => `${a.id}=${a.value_id ?? a.value_name ?? '(sin valor)'}`)
+    .join(', ')}
+</div>
+
                 </div>
 
                 <p className="text-xs text-neutral-500 mt-3">
