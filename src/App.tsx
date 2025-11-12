@@ -21,7 +21,10 @@ type AppUser = {
 const SESSION_KEY = "ssms_user";
 
 function App() {
-  const [activeTab, setActiveTab] = useState<TabType>("dashboard");
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+  return (localStorage.getItem("activeTab") as TabType) || "dashboard";
+});
+
 
   // 1) Hidratar sesión desde localStorage (con expiración)
   const [user, setUser] = useState<AppUser | null>(() => {
@@ -41,13 +44,14 @@ function App() {
 
   // 2) Mantener pestañas como antes
   useEffect(() => {
-    const handleTabChange = (event: Event) => {
-      const customEvent = event as CustomEvent<TabType>;
-      setActiveTab(customEvent.detail);
-    };
-    window.addEventListener("tabChange", handleTabChange);
-    return () => window.removeEventListener("tabChange", handleTabChange);
-  }, []);
+  const handleTabChange = (event: Event) => {
+    const customEvent = event as CustomEvent<TabType>;
+    setActiveTab(customEvent.detail);
+    localStorage.setItem("activeTab", customEvent.detail); // 👈 persistir pestaña actual
+  };
+  window.addEventListener("tabChange", handleTabChange);
+  return () => window.removeEventListener("tabChange", handleTabChange);
+}, []);
 
   // 3) Guardar sesión al hacer login (duración 7 días)
   const handleLogin = (u: AppUser) => {
@@ -58,9 +62,11 @@ function App() {
 
   // 4) Logout: limpiar almacenamiento
   const handleLogout = () => {
-    localStorage.removeItem(SESSION_KEY);
-    setUser(null);
-  };
+  localStorage.removeItem("activeTab");
+  localStorage.removeItem(SESSION_KEY);
+  setUser(null);
+};
+
 
   // 5) Sincronizar logout/login entre pestañas
   useEffect(() => {
