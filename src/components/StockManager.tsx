@@ -70,6 +70,148 @@ type EditFamilyState = {
 };
 
 const ALFA_ORDER = ["XS", "S", "M", "L", "XL", "XXL", "3XL"];
+const FamCard = ({
+  fam,
+  cols,
+  catById,
+  totalFam,
+  openEditFamily,
+  getStockStatusClass,
+  formatPrice,
+  expandAll,
+}: any) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const toggle = () => setIsOpen(!isOpen);
+
+  // sincroniza con el estado global
+  useEffect(() => {
+    setIsOpen(expandAll);
+  }, [expandAll]);
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm hover:shadow-md border border-neutral-200 overflow-hidden transition flex flex-col">
+      {/* Header */}
+      <div className="p-4 flex flex-col gap-1">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="font-semibold text-neutral-900">{fam.name}</h4>
+            <p className="text-xs text-neutral-500">
+              {fam.categoria_id ? catById[fam.categoria_id] : "Sin categoría"} ·{" "}
+              {fam.tipo === "numerica" ? "Numérica" : "Alfanumérica"}
+            </p>
+          </div>
+          <div className="text-right">
+            <div className="text-sm font-bold text-neutral-800">
+              {totalFam} unidades
+            </div>
+            <div className="flex gap-3 mt-2 justify-end">
+              <button
+                onClick={() => openEditFamily(fam)}
+                className="text-blue-600 hover:text-blue-800 text-xs font-semibold flex items-center gap-1"
+              >
+                <Pencil size={14} /> Editar
+              </button>
+
+              <button
+                onClick={async () => {
+                  if (
+                    !confirm(
+                      `¿Eliminar "${fam.name}" y todas sus tallas? Esta acción no se puede deshacer.`
+                    )
+                  )
+                    return;
+
+                  const items = Object.values(fam.byTalla);
+                  const ids = items.map((p) => p.id);
+                  const skus = items.map((p) => String(p.sku));
+
+                  // Eliminamos en Woo (best-effort)
+                  await Promise.allSettled(
+                    skus.map((s) => wooDeleteProductLocal(s))
+                  );
+
+                  // Eliminamos en BD
+                  const { error } = await supabase
+                    .from("productos")
+                    .delete()
+                    .in("id", ids);
+                  if (error) {
+                    console.error(error);
+                    toast.error("No se pudo eliminar el producto.");
+                    return;
+                  }
+
+                  toast.success(
+                    `Producto "${fam.name}" eliminado (${ids.length} talla(s)).`
+                  );
+                  location.reload(); // recarga para reflejar cambios (o podrías llamar fetchProducts)
+                }}
+                className="text-red-600 hover:text-red-800 text-xs font-semibold flex items-center gap-1"
+              >
+                <Trash2 size={14} /> Eliminar
+              </button>
+
+              <button
+                onClick={toggle}
+                className="text-neutral-600 hover:text-neutral-800 text-xs font-semibold flex items-center gap-1"
+              >
+                {isOpen ? "Ocultar" : "Ver"} <span>{isOpen ? "˄" : "˅"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Expandible */}
+      {isOpen && (
+        <div className="px-4 pb-4 border-t border-neutral-100 text-xs overflow-x-auto">
+          <div className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr,0.7fr,1fr] gap-2 py-2 font-semibold text-[11px] text-neutral-500">
+            <div>Talla</div>
+            <div className="text-center">B2B</div>
+            <div className="text-center">Web</div>
+            <div className="text-center">ML</div>
+            <div className="text-center">Total</div>
+            <div className="text-center">Precio</div>
+          </div>
+
+          {cols.map((t: any) => {
+            const p = fam.byTalla[t.id];
+            if (!p) return null;
+            const total =
+              (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0);
+            const cls = getStockStatusClass(total);
+
+            return (
+              <div
+                key={t.id}
+                className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr,0.7fr,1fr] gap-2 items-center py-1.5 rounded-md hover:bg-neutral-50"
+              >
+                <div className="font-semibold text-neutral-800">
+                  {t.etiqueta}
+                </div>
+                <div className="text-center text-[11px] font-semibold text-fuchsia-700">
+                  {p.stockb2b}
+                </div>
+                <div className="text-center text-[11px] font-semibold text-blue-700">
+                  {p.stockweb}
+                </div>
+                <div className="text-center text-[11px] font-semibold text-amber-700">
+                  {p.stockml}
+                </div>
+                <div className={`text-center text-[11px] font-semibold ${cls}`}>
+                  {total}
+                </div>
+                <div className="text-center text-[11px] text-neutral-600">
+                  {p.price ? formatPrice(p.price) : "—"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const StockManager = () => {
   // datos
@@ -92,6 +234,8 @@ export const StockManager = () => {
   const [loading, setLoading] = useState(true);
   const [tableBusy, setTableBusy] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string>("");
+
+  const [expandAll, setExpandAll] = useState<boolean>(false);
 
   // modal
   const [showModal, setShowModal] = useState(false);
@@ -617,18 +761,20 @@ export const StockManager = () => {
   }, [editingProduct?.categoria_id, cats]);
 
   const tallaOptions = useMemo(() => {
-  const name = (selectedCatName || "").toLowerCase().trim();
-  const usaNumericas = name === "pantalones" || name === "shorts";
+    const name = (selectedCatName || "").toLowerCase().trim();
+    const usaNumericas = name === "pantalones" || name === "shorts";
 
-  return tallas
-    .filter((t) => (usaNumericas ? t.tipo === "numerica" : t.tipo === "alfanumerica"))
-    .sort((a, b) => {
-      if (a.tipo === "numerica" && b.tipo === "numerica") {
-        return (a.orden ?? 0) - (b.orden ?? 0);
-      }
-      return ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta);
-    });
-}, [tallas, selectedCatName]);
+    return tallas
+      .filter((t) =>
+        usaNumericas ? t.tipo === "numerica" : t.tipo === "alfanumerica"
+      )
+      .sort((a, b) => {
+        if (a.tipo === "numerica" && b.tipo === "numerica") {
+          return (a.orden ?? 0) - (b.orden ?? 0);
+        }
+        return ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta);
+      });
+  }, [tallas, selectedCatName]);
 
   if (loading)
     return (
@@ -645,28 +791,31 @@ export const StockManager = () => {
       : "bg-amber-100 text-amber-700";
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 transition-colors duration-300">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">Gestión de Inventario</h2>
-          <p className="text-sm text-neutral-600">
+          <h2 className="text-2xl font-bold text-neutral-900 dark:text-white">
+            Gestión de Inventario
+          </h2>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
             Última sync: {lastUpdate}{" "}
             {tableBusy && (
-              <span className="ml-2 text-xs text-neutral-400">
+              <span className="ml-2 text-xs text-neutral-400 dark:text-neutral-500">
                 (actualizando…)
               </span>
             )}
           </p>
         </div>
 
+        {/* Filtros */}
         <div className="flex items-center gap-3">
           <input
             type="text"
             placeholder="Buscar por nombre o SKU..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="border rounded px-3 py-2"
+            className="border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white placeholder-neutral-500 dark:placeholder-neutral-400 focus:ring-2 focus:ring-neutral-500 focus:outline-none"
           />
           <select
             value={categoryFilter}
@@ -675,7 +824,7 @@ export const StockManager = () => {
                 e.target.value === "all" ? "all" : Number(e.target.value)
               )
             }
-            className="border rounded px-3 py-2"
+            className="border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 focus:outline-none"
           >
             <option value="all">Todas las categorías</option>
             {cats.map((c) => (
@@ -701,48 +850,51 @@ export const StockManager = () => {
               setEditingFamily(null);
               setShowModal(true);
             }}
-            className="bg-green-600 text-white px-4 py-2 rounded flex items-center gap-2"
+            className="bg-neutral-900 hover:bg-neutral-800 text-white px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm transition-all"
           >
             <Plus size={16} /> Agregar
           </button>
         </div>
       </div>
 
-      {/* Acciones eliminar (opcional) */}
+      {/* Acciones eliminar */}
       {selectedIds.length > 0 && (
         <div>
           <button
             onClick={deleteSelected}
-            className="bg-red-600 text-white px-4 py-2 rounded flex items-center gap-2"
+            className="bg-neutral-800 hover:bg-neutral-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm transition-all"
           >
             <Trash2 size={16} /> Eliminar seleccionados ({selectedIds.length})
           </button>
         </div>
       )}
 
-      {/* Tabla MATRIZ por familias */}
-      <div className="bg-white border rounded shadow overflow-x-auto text-[15px]">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b bg-neutral-50">
-              <th className="text-left py-3 px-4 text-sm font-semibold">
-                Nombre
-              </th>
-              <th className="text-center py-3 px-4 text-sm font-semibold">
-                <div className="flex flex-col items-center">
-                  <span>Matriz de tallas</span>
-                  <span className="text-[11px] text-neutral-500 font-normal">
-                    (B2B / Web / ML)
-                  </span>
-                </div>
-              </th>
-              <th className="text-center py-3 px-4 text-sm font-semibold align-middle">
-                Total
-              </th>
-            </tr>
-          </thead>
+      {/* Vista de tarjetas expandibles */}
+      <div className="bg-white dark:bg-neutral-900 rounded-xl p-6 border border-neutral-200 dark:border-neutral-700 shadow-sm transition-colors">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-neutral-900 dark:text-white">
+              Stock Madre (Inventario por familia)
+            </h3>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              Última sync: {lastUpdate}
+            </p>
+          </div>
 
-          <tbody>
+          <button
+            onClick={() => setExpandAll((prev) => !prev)}
+            className="self-start sm:self-auto bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 text-neutral-800 dark:text-neutral-200 text-sm font-semibold px-4 py-2 rounded-lg transition-all shadow-sm"
+          >
+            {expandAll ? "Colapsar todas" : "Expandir todas"}
+          </button>
+        </div>
+
+        {pageFams.length === 0 ? (
+          <div className="text-center py-12 text-neutral-500 dark:text-neutral-400">
+            No hay productos para mostrar.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {pageFams.map((fam, idx) => {
               const cols = columnsForFam(fam);
               const totalFam = Object.values(fam.byTalla).reduce(
@@ -753,231 +905,41 @@ export const StockManager = () => {
                   (p.stockml || 0),
                 0
               );
+              const famKey = `${fam.name}-${idx}`;
 
               return (
-                <tr key={idx} className="border-b align-top">
-                  {/* Nombre / categoría / tipo + ✏️ */}
-                  <td className="py-3 px-4 w-64">
-                    <div className="font-semibold">{fam.name}</div>
-                    <div className="text-xs text-neutral-500">
-                      {fam.categoria_id ? catById[fam.categoria_id] : ""}
-                    </div>
-                    <button
-                      onClick={() => openEditFamily(fam)}
-                      className="mt-2 inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm"
-                      title="Editar stocks de esta familia"
-                    >
-                      <Pencil size={16} /> Editar
-                    </button>
-                    <div>
-                      <button
-                        onClick={async () => {
-                          if (
-                            !confirm(
-                              `Eliminar "${fam.name}" y todas sus tallas? Esta acción no se puede deshacer.`
-                            )
-                          )
-                            return;
-                          const items = Object.values(fam.byTalla);
-                          const ids = items.map((p) => p.id);
-                          const skus = items.map((p) => String(p.sku));
-
-                          // Woo (best-effort)
-                          await Promise.allSettled(
-                            skus.map((s) => wooDeleteProductLocal(s))
-                          );
-
-                          // BD
-                          const { error } = await supabase
-                            .from("productos")
-                            .delete()
-                            .in("id", ids);
-                          if (error) {
-                            console.error(error);
-                            toastAndLog(
-                              "No se pudo eliminar el producto.",
-                              "error"
-                            );
-                            return;
-                          }
-                          toastAndLog(
-                            `Producto "${fam.name}" eliminado (${ids.length} talla(s)).`,
-                            "sync"
-                          );
-                          fetchProducts({ silent: true });
-                        }}
-                        className="mt-1 inline-flex items-center gap-2 text-red-600 hover:text-red-800 text-sm"
-                        title="Eliminar este producto (todas sus tallas)"
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-                  </td>
-
-                  {/* Matriz (solo lectura) */}
-                  <td className="py-3 px-4">
-                    <div className="overflow-x-auto" style={{ minWidth: 360 }}>
-                      <div
-                        className="grid gap-y-2 gap-x-2 items-center"
-                        style={{
-                          gridTemplateColumns: `120px repeat(${cols.length}, minmax(72px, 1fr))`,
-                        }}
-                      >
-                        {/* encabezados tallas */}
-                        <div></div>
-                        {cols.map((t) => (
-                          <div
-                            key={t.id}
-                            className="text-center text-lg text-neutral-700 font-medium"
-                          >
-                            {t.etiqueta}
-                          </div>
-                        ))}
-
-                        {/* filas por canal */}
-                        {/* B2B */}
-                        <div className="text-right pr-2">
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge(
-                              "B2B"
-                            )}`}
-                          >
-                            B2B
-                          </span>
-                        </div>
-                        {cols.map((t) => {
-                          const p = fam.byTalla[t.id];
-                          const val = p?.stockb2b ?? 0;
-                          const cls = getStockStatusClass(val);
-                          return (
-                            <div key={t.id} className="text-center">
-                              <span className={`font-semibold ${cls}`}>
-                                {val}
-                              </span>
-                            </div>
-                          );
-                        })}
-
-                        {/* Web */}
-                        <div className="text-right pr-2">
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge(
-                              "Web"
-                            )}`}
-                          >
-                            Web
-                          </span>
-                        </div>
-                        {cols.map((t) => {
-                          const p = fam.byTalla[t.id];
-                          const val = p?.stockweb ?? 0;
-                          const cls = getStockStatusClass(val);
-                          return (
-                            <div key={t.id} className="text-center">
-                              <span className={`font-semibold ${cls}`}>
-                                {val}
-                              </span>
-                            </div>
-                          );
-                        })}
-
-                        {/* ML */}
-                        <div className="text-right pr-2">
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge(
-                              "ML"
-                            )}`}
-                          >
-                            ML
-                          </span>
-                        </div>
-                        {cols.map((t) => {
-                          const p = fam.byTalla[t.id];
-                          const val = p?.stockml ?? 0;
-                          const cls = getStockStatusClass(val);
-                          return (
-                            <div key={t.id} className="text-center">
-                              <span className={`font-semibold ${cls}`}>
-                                {val}
-                              </span>
-                            </div>
-                          );
-                        })}
-
-                        {/* TOTAL */}
-                        <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">
-                            Total
-                          </span>
-                        </div>
-                        {cols.map((t) => {
-                          const p = fam.byTalla[t.id];
-                          const total =
-                            (p?.stockb2b ?? 0) +
-                            (p?.stockweb ?? 0) +
-                            (p?.stockml ?? 0);
-                          const cls = getStockStatusClass(total);
-                          return (
-                            <div key={t.id} className="text-center">
-                              <span className={`font-semibold ${cls}`}>
-                                {total}
-                              </span>
-                            </div>
-                          );
-                        })}
-
-                        {/* PRECIO */}
-                        <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-sm font-semibold bg-green-100 text-green-700">
-                            Precio
-                          </span>
-                        </div>
-                        {cols.map((t) => {
-                          const p = fam.byTalla[t.id];
-                          const price = Number(p?.price ?? 0);
-                          return (
-                            <div key={t.id} className="text-center text-sm">
-                              {price ? formatPrice(price) : "—"}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </td>
-
-                  <td className="py-4 px-4 text-center align-middle">
-                    <div className="text-lg font-bold text-neutral-800">
-                      {totalFam}
-                    </div>
-                  </td>
-                </tr>
+                <FamCard
+                  key={famKey}
+                  fam={fam}
+                  cols={cols}
+                  catById={catById}
+                  totalFam={totalFam}
+                  openEditFamily={openEditFamily}
+                  getStockStatusClass={getStockStatusClass}
+                  formatPrice={formatPrice}
+                  expandAll={expandAll}
+                />
               );
             })}
-
-            {pageFams.length === 0 && (
-              <tr>
-                <td colSpan={3} className="text-center py-8 text-neutral-500">
-                  No se encontraron productos
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+          </div>
+        )}
       </div>
 
       {/* Paginación de familias */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="text-sm text-neutral-600">
+        <div className="text-sm text-neutral-600 dark:text-neutral-400">
           Mostrando <strong>{showingFrom}</strong>–<strong>{showingTo}</strong>{" "}
           de <strong>{totalFamilies}</strong> familias
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-sm text-neutral-600">Filas por página:</span>
+          <span className="text-sm text-neutral-600 dark:text-neutral-400">
+            Filas por página:
+          </span>
           <select
             value={pageSize}
             onChange={(e) => setPageSize(Number(e.target.value))}
-            className="border rounded px-2 py-1 text-sm"
+            className="border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 rounded px-2 py-1 text-sm text-neutral-800 dark:text-neutral-200 focus:ring-2 focus:ring-neutral-500 outline-none"
           >
             {[10, 20, 30, 50, 100].map((n) => (
               <option key={n} value={n}>
@@ -988,31 +950,31 @@ export const StockManager = () => {
 
           <div className="flex items-center gap-1 ml-2">
             <button
-              className="border rounded p-1 disabled:opacity-50"
+              className="border border-neutral-300 dark:border-neutral-700 rounded p-1 disabled:opacity-50 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition"
               onClick={goFirst}
               disabled={page === 1}
             >
               <ChevronsLeft size={16} />
             </button>
             <button
-              className="border rounded p-1 disabled:opacity-50"
+              className="border border-neutral-300 dark:border-neutral-700 rounded p-1 disabled:opacity-50 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition"
               onClick={goPrev}
               disabled={page === 1}
             >
               <ChevronLeft size={16} />
             </button>
-            <span className="mx-2 text-sm">
+            <span className="mx-2 text-sm text-neutral-700 dark:text-neutral-300">
               Página <strong>{page}</strong> de <strong>{totalPages}</strong>
             </span>
             <button
-              className="border rounded p-1 disabled:opacity-50"
+              className="border border-neutral-300 dark:border-neutral-700 rounded p-1 disabled:opacity-50 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition"
               onClick={goNext}
               disabled={page === totalPages}
             >
               <ChevronRight size={16} />
             </button>
             <button
-              className="border rounded p-1 disabled:opacity-50"
+              className="border border-neutral-300 dark:border-neutral-700 rounded p-1 disabled:opacity-50 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition"
               onClick={goLast}
               disabled={page === totalPages}
             >
@@ -1024,10 +986,10 @@ export const StockManager = () => {
 
       {/* MODAL */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-lg w-full max-w-4xl relative p-6">
+        <div className="fixed inset-0 bg-black/50 dark:bg-black/60 flex items-center justify-center z-50 p-4 transition-colors">
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-2xl shadow-2xl w-full max-w-5xl relative p-6 transition-all">
             <button
-              className="absolute top-3 right-3 text-neutral-500"
+              className="absolute top-4 right-4 text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-white transition"
               onClick={() => {
                 setShowModal(false);
                 setEditingProduct(null);
@@ -1035,10 +997,10 @@ export const StockManager = () => {
                 setIsExistingSKU(false);
               }}
             >
-              <X size={18} />
+              <X size={20} />
             </button>
 
-            <h3 className="text-lg font-semibold mb-3">
+            <h3 className="text-xl font-semibold mb-4 text-neutral-900 dark:text-white">
               {isExistingSKU
                 ? "Editar stock por tallas"
                 : "Agregar producto nuevo"}
@@ -1047,10 +1009,10 @@ export const StockManager = () => {
             {/* MODO EDITAR: MATRIZ */}
             {isExistingSKU && editingFamily && (
               <>
-                <div className="mb-2 text-sm text-neutral-600">
+                <div className="mb-2 text-sm text-neutral-700 dark:text-neutral-300">
                   <strong>Producto:</strong> {editingFamily.name}
                 </div>
-                <div className="mb-2 text-sm text-neutral-600">
+                <div className="mb-2 text-sm text-neutral-700 dark:text-neutral-300">
                   <strong>Categoría:</strong>{" "}
                   {editingFamily.categoria_id
                     ? catById[editingFamily.categoria_id]
@@ -1058,13 +1020,13 @@ export const StockManager = () => {
                 </div>
 
                 <div className="mb-3 text-sm">
-                  <label className="block text-neutral-600 mb-1">
+                  <label className="block text-neutral-700 dark:text-neutral-300 mb-1">
                     Precio base (se usará al crear tallas nuevas)
                   </label>
                   <input
                     type="text"
                     inputMode="numeric"
-                    className="border rounded px-3 py-2 w-40"
+                    className="border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 w-40 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
                     value={String(editingFamily.basePrice ?? 0)}
                     onBeforeInput={(e) => {
                       const el = e.currentTarget;
@@ -1091,39 +1053,39 @@ export const StockManager = () => {
                   />
                 </div>
 
-                <div className="mb-3 text-[11px] text-neutral-500">
+                <div className="mb-3 text-xs text-neutral-500 dark:text-neutral-400">
                   Edita el stock <strong>absoluto</strong> por talla y canal. El
                   precio se puede ajustar por talla.
                 </div>
 
+                {/* MATRIZ */}
                 <div className="overflow-x-auto" style={{ minWidth: 480 }}>
                   <div
-                    className="grid gap-y-2 gap-x-2 items-center"
+                    className="grid gap-y-2 gap-x-2 items-center text-sm"
                     style={{
                       gridTemplateColumns: `120px repeat(${editingFamily.cols.length}, minmax(72px, 1fr))`,
                     }}
                   >
+                    {/* Cabecera de tallas */}
                     <div></div>
                     {editingFamily.cols.map((t) => (
                       <div
                         key={t.id}
-                        className="text-center text-xs text-neutral-700 font-medium"
+                        className="text-center text-xs text-neutral-700 dark:text-neutral-300 font-medium"
                       >
                         {t.etiqueta}
                       </div>
                     ))}
 
+                    {/* Canales */}
                     {(["B2B", "Web", "ML"] as const).map((label) => (
                       <div className="contents" key={label}>
                         <div className="text-right pr-2">
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-semibold ${channelBadge(
-                              label
-                            )}`}
-                          >
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
                             {label}
                           </span>
                         </div>
+
                         {editingFamily.cols.map((t) => {
                           const v = editingFamily.values[t.id];
                           const field =
@@ -1133,13 +1095,17 @@ export const StockManager = () => {
                               ? "web"
                               : "ml";
                           const value = (v as any)?.[field] ?? 0;
-                          const disabled = !v?.id; // si no existe aún esa talla en BD
+                          const disabled = !v?.id;
                           return (
                             <div key={t.id} className="text-center">
                               <input
                                 type="text"
                                 inputMode="numeric"
-                                className="w-full border rounded px-2 py-1 text-center"
+                                className={`w-full border rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white border-neutral-300 dark:border-neutral-700 ${
+                                  disabled
+                                    ? "opacity-40 cursor-not-allowed"
+                                    : "focus:ring-2 focus:ring-neutral-500"
+                                }`}
                                 value={disabled ? "" : String(value)}
                                 placeholder={disabled ? "—" : "0"}
                                 disabled={disabled}
@@ -1195,9 +1161,9 @@ export const StockManager = () => {
                       </div>
                     ))}
 
-                    {/* TOTAL (solo lectura) */}
+                    {/* Total */}
                     <div className="text-right pr-2">
-                      <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">
+                      <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
                         Total
                       </span>
                     </div>
@@ -1215,9 +1181,9 @@ export const StockManager = () => {
                       );
                     })}
 
-                    {/* PRECIO (editable siempre) */}
+                    {/* Precio */}
                     <div className="text-right pr-2">
-                      <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">
+                      <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
                         Precio
                       </span>
                     </div>
@@ -1231,7 +1197,7 @@ export const StockManager = () => {
                           <input
                             type="text"
                             inputMode="numeric"
-                            className="w-full border rounded px-2 py-1 text-center"
+                            className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
                             value={String(value || 0)}
                             onBeforeInput={(e) => {
                               const el = e.currentTarget;
@@ -1286,7 +1252,7 @@ export const StockManager = () => {
               <>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm text-neutral-600 mb-1">
+                    <label className="block text-sm text-neutral-700 dark:text-neutral-300 mb-1">
                       Nombre
                     </label>
                     <input
@@ -1298,11 +1264,11 @@ export const StockManager = () => {
                           name: e.target.value,
                         })
                       }
-                      className="w-full border rounded px-3 py-2"
+                      className="w-full border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-neutral-600 mb-1">
+                    <label className="block text-sm text-neutral-700 dark:text-neutral-300 mb-1">
                       Categoría
                     </label>
                     <select
@@ -1315,7 +1281,7 @@ export const StockManager = () => {
                             : "",
                         })
                       }
-                      className="w-full border rounded px-3 py-2"
+                      className="w-full border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
                     >
                       <option value="">Seleccionar categoría</option>
                       {cats.map((c) => (
@@ -1328,13 +1294,13 @@ export const StockManager = () => {
                 </div>
 
                 <div className="mt-3">
-                  <label className="block text-sm text-neutral-600 mb-1">
+                  <label className="block text-sm text-neutral-700 dark:text-neutral-300 mb-1">
                     Precio base
                   </label>
                   <input
                     type="text"
                     inputMode="numeric"
-                    className="border rounded px-3 py-2 w-40"
+                    className="border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 w-40 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
                     value={String(editingProduct?.basePrice ?? 0)}
                     onBeforeInput={(e) => {
                       const el = e.currentTarget;
@@ -1360,12 +1326,18 @@ export const StockManager = () => {
                 </div>
 
                 {/* MATRIZ CREAR */}
-                <div className="mt-4 overflow-x-auto" style={{ minWidth: 480 }}>
+                <div className="mt-5 overflow-x-auto" style={{ minWidth: 480 }}>
                   {(() => {
-                    const rawCatName = cats.find((c) => c.id === Number(editingProduct?.categoria_id))?.name || "";
-const catName = rawCatName.toLowerCase().trim();
-const usaNumericas = catName === "pantalones" || catName === "shorts";
-const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumerica";
+                    const rawCatName =
+                      cats.find(
+                        (c) => c.id === Number(editingProduct?.categoria_id)
+                      )?.name || "";
+                    const catName = rawCatName.toLowerCase().trim();
+                    const usaNumericas =
+                      catName === "pantalones" || catName === "shorts";
+                    const tipo: "alfanumerica" | "numerica" = usaNumericas
+                      ? "numerica"
+                      : "alfanumerica";
 
                     const cols = tallas
                       .filter((t) => t.tipo === tipo)
@@ -1376,7 +1348,6 @@ const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumer
                             ALFA_ORDER.indexOf(b.etiqueta)
                       );
 
-                    // estado local de la matriz de creación
                     if (!editingProduct?.matrix) {
                       const init: Record<
                         number,
@@ -1412,14 +1383,14 @@ const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumer
 
                     return (
                       <div
-                        className="grid gap-y-2 gap-x-2 items-center"
+                        className="grid gap-y-2 gap-x-2 items-center text-sm"
                         style={{ gridTemplateColumns }}
                       >
                         <div></div>
                         {cols.map((t) => (
                           <div
                             key={t.id}
-                            className="text-center text-xs text-neutral-700 font-medium"
+                            className="text-center text-xs text-neutral-700 dark:text-neutral-300 font-medium"
                           >
                             {t.etiqueta}
                           </div>
@@ -1427,7 +1398,7 @@ const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumer
 
                         {/* B2B */}
                         <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-fuchsia-100 text-fuchsia-700">
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
                             B2B
                           </span>
                         </div>
@@ -1436,7 +1407,7 @@ const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumer
                             <input
                               type="text"
                               inputMode="numeric"
-                              className="w-full border rounded px-2 py-1 text-center"
+                              className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
                               value={String(
                                 editingProduct?.matrix?.[t.id]?.b2b ?? 0
                               )}
@@ -1465,7 +1436,7 @@ const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumer
 
                         {/* Web */}
                         <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-blue-100 text-blue-700">
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
                             Web
                           </span>
                         </div>
@@ -1474,7 +1445,7 @@ const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumer
                             <input
                               type="text"
                               inputMode="numeric"
-                              className="w-full border rounded px-2 py-1 text-center"
+                              className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
                               value={String(
                                 editingProduct?.matrix?.[t.id]?.web ?? 0
                               )}
@@ -1503,7 +1474,7 @@ const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumer
 
                         {/* ML */}
                         <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-amber-100 text-amber-700">
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
                             ML
                           </span>
                         </div>
@@ -1512,7 +1483,7 @@ const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumer
                             <input
                               type="text"
                               inputMode="numeric"
-                              className="w-full border rounded px-2 py-1 text-center"
+                              className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
                               value={String(
                                 editingProduct?.matrix?.[t.id]?.ml ?? 0
                               )}
@@ -1539,9 +1510,9 @@ const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumer
                           </div>
                         ))}
 
-                        {/* TOTAL (solo lectura) */}
+                        {/* TOTAL */}
                         <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
                             Total
                           </span>
                         </div>
@@ -1563,9 +1534,9 @@ const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumer
                           );
                         })}
 
-                        {/* PRECIO */}
+                        {/* Precio */}
                         <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
                             Precio
                           </span>
                         </div>
@@ -1574,7 +1545,7 @@ const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumer
                             <input
                               type="text"
                               inputMode="numeric"
-                              className="w-full border rounded px-2 py-1 text-center"
+                              className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
                               value={String(
                                 editingProduct?.matrix?.[t.id]?.price ??
                                   editingProduct?.basePrice ??
@@ -1608,7 +1579,6 @@ const tipo: "alfanumerica" | "numerica" = usaNumericas ? "numerica" : "alfanumer
                 </div>
               </>
             )}
-
             <div className="mt-4 flex gap-2">
               <button
                 onClick={saveProduct}

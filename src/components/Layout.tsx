@@ -1,7 +1,8 @@
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useEffect, useState } from "react";
 import {
   LayoutDashboard,
   Package,
+  Building2,
   Globe,
   ShoppingCart,
   FileText,
@@ -9,92 +10,114 @@ import {
   Settings,
   Menu,
   X,
-  LogOut
-} from 'lucide-react'
-import { supabase } from '../supabaseClient'
+  LogOut,
+  Sun,
+  Moon,
+} from "lucide-react";
+import { supabase } from "../supabaseClient";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface LayoutProps {
-  children: ReactNode
-  onLogout: () => void
-  user: any
+  children: ReactNode;
+  onLogout: () => void;
+  user: any;
 }
 
 export type TabType =
-  | 'dashboard'
-  | 'stock'
-  | 'wordpress'
-  | 'mercadolibre'
-  | 'orders'
-  | 'alerts'
-  | 'admin'
+  | "dashboard"
+  | "stock"
+  | "wordpress"
+  | "mercadolibre"
+  | "orders"
+  | "alerts"
+  | "admin";
 
 interface Tab {
-  id: TabType
-  label: string
-  icon: ReactNode
+  id: TabType;
+  label: string;
+  icon: ReactNode;
 }
 
-export const Layout = ({ children, onLogout, user }: LayoutProps) => {
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard')
-  const [menuOpen, setMenuOpen] = useState(false)
+export const Layout = ({ children, onLogout }: LayoutProps) => {
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    return (localStorage.getItem("activeTab") as TabType) || "dashboard";
+  });
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [unreadAlerts, setUnreadAlerts] = useState(0);
 
-  // ---- Badge dinámico para alertas no leídas ----
-  const [unreadAlerts, setUnreadAlerts] = useState(0)
-
-  const loadUnreadAlerts = async () => {
-    const { count, error } = await supabase
-      .from('alerts')
-      .select('id', { count: 'exact', head: true })
-      .eq('read', false)
-
-    if (!error) setUnreadAlerts(count || 0)
-  }
+  // Tema claro / oscuro
+  const [theme, setTheme] = useState<"light" | "dark">(
+    () => (localStorage.getItem("theme") as "light" | "dark") || "light"
+  );
 
   useEffect(() => {
-    // carga inicial
-    loadUnreadAlerts()
+    const root = document.documentElement;
+    if (theme === "dark") root.classList.add("dark");
+    else root.classList.remove("dark");
+    localStorage.setItem("theme", theme);
+  }, [theme]);
 
-    // escucha eventos del bus para refrescar el badge
-    const onNew = () => loadUnreadAlerts()      // cuando se crea una alerta
-    const onRefresh = () => loadUnreadAlerts()  // cuando se marcan leídas/acciones
+  const toggleTheme = () =>
+    setTheme((prev) => (prev === "light" ? "dark" : "light"));
 
-    window.addEventListener('app:alert', onNew)
-    window.addEventListener('alerts:refresh', onRefresh)
+  // Alertas no leídas
+  const loadUnreadAlerts = async () => {
+    const { count, error } = await supabase
+      .from("alerts")
+      .select("id", { count: "exact", head: true })
+      .eq("read", false);
+    if (!error) setUnreadAlerts(count || 0);
+  };
 
-    // polling suave por si cambian fuera de esta vista
-    const interval = setInterval(loadUnreadAlerts, 30000)
+  useEffect(() => {
+    loadUnreadAlerts();
+    const onNew = () => loadUnreadAlerts();
+    const onRefresh = () => loadUnreadAlerts();
+    window.addEventListener("app:alert", onNew);
+    window.addEventListener("alerts:refresh", onRefresh);
+    const interval = setInterval(loadUnreadAlerts, 30000);
 
     return () => {
-      window.removeEventListener('app:alert', onNew)
-      window.removeEventListener('alerts:refresh', onRefresh)
-      clearInterval(interval)
-    }
-  }, [])
+      window.removeEventListener("app:alert", onNew);
+      window.removeEventListener("alerts:refresh", onRefresh);
+      clearInterval(interval);
+    };
+  }, []);
 
   const tabs: Tab[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
-    { id: 'stock', label: 'Stock Madre', icon: <Package size={20} /> },
-    { id: 'wordpress', label: 'Web', icon: <Globe size={20} /> },
-    { id: 'mercadolibre', label: 'Mercado Libre', icon: <ShoppingCart size={20} /> },
-    { id: 'orders', label: 'Órdenes', icon: <FileText size={20} /> },
-    { id: 'alerts', label: 'Alertas', icon: <Bell size={20} /> },
-    { id: 'admin', label: 'Admin', icon: <Settings size={20} /> }
-  ]
+    { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={20} /> },
+    { id: "stock", label: "Stock Madre", icon: <Package size={20} /> },
+    { id: "orders", label: "B2B", icon: <Building2 size={20} /> },
+    { id: "wordpress", label: "Web", icon: <Globe size={20} /> },
+    {
+      id: "mercadolibre",
+      label: "Mercado Libre",
+      icon: <ShoppingCart size={20} />,
+    },
+    { id: "alerts", label: "Alertas", icon: <Bell size={20} /> },
+    { id: "admin", label: "Admin", icon: <Settings size={20} /> },
+  ];
+
+  // Colores especiales SOLO para B2B, Web, ML
+  const tabColors: Partial<Record<TabType, string>> = {
+    orders: "#6d28d9", // violeta
+    wordpress: "#2563eb", // azul
+    mercadolibre: "#d97706", // dorado
+  };
 
   const handleTabChange = (tabId: TabType) => {
-    setActiveTab(tabId)
-    setMenuOpen(false)
-    window.dispatchEvent(new CustomEvent('tabChange', { detail: tabId }))
-  }
+    setActiveTab(tabId);
+    localStorage.setItem("activeTab", tabId);
+    setMenuOpen(false);
+    window.dispatchEvent(new CustomEvent("tabChange", { detail: tabId }));
+  };
 
-  const handleLogout = () => {
-    onLogout()
-  }
+  const handleLogout = () => onLogout();
+
   return (
-    
-    <div className="min-h-screen bg-neutral-50">
+    <div className="min-h-screen bg-neutral-50 dark:bg-neutral-900 dark:text-white overflow-hidden transition-colors duration-300">
       {/* NAVBAR */}
-      <nav className="bg-neutral-900 text-white shadow-lg border-b border-neutral-800">
+      <nav className="bg-neutral-900 dark:bg-neutral-950 text-white shadow-lg border-b border-neutral-800 dark:border-neutral-700 transition-colors">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             {/* LOGO */}
@@ -106,10 +129,9 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
                   className="w-[85%] h-[85%] object-contain"
                 />
               </div>
-
-              <div>
-                <h1 className="text-xl font-bold tracking-tight">Stock Manager</h1>
-              </div>
+              <h1 className="font-bold tracking-tight text-white">
+                Stock Manager
+              </h1>
             </div>
 
             {/* MENÚ MÓVIL */}
@@ -121,64 +143,151 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
             </button>
 
             {/* MENÚ DESKTOP */}
-            <div className="hidden lg:flex items-center space-x-1">
-              {tabs.map(tab => (
+            <div className="hidden lg:flex flex-1 items-center justify-end">
+              {/* Tabs */}
+              <div className="flex items-center space-x-1">
+                {tabs.map((tab) => {
+                  const isActive = activeTab === tab.id;
+                  const color = tabColors[tab.id];
+                  const hasCustomColor = !!color;
+
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => handleTabChange(tab.id)}
+                      className={`relative flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors font-medium whitespace-nowrap ${
+                        isActive
+                          ? hasCustomColor
+                            ? "text-white"
+                            : "text-black"
+                          : "text-neutral-300 hover:bg-neutral-800 hover:text-white"
+                      }`}
+                    >
+                      {isActive && (
+                        <motion.div
+                          layoutId="activeTabIndicator"
+                          className="absolute inset-0 rounded-lg shadow-md"
+                          style={{
+                            backgroundColor: hasCustomColor
+                              ? color
+                              : "#ffffff",
+                          }}
+                          transition={{
+                            type: "spring",
+                            stiffness: 500,
+                            damping: 35,
+                          }}
+                        />
+                      )}
+                      <span className="relative z-10 flex items-center gap-2">
+                        {tab.icon}
+                        {tab.label}
+                        {tab.id === "alerts" && unreadAlerts > 0 && (
+                          <span className="absolute -top-1 -right-2 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
+                            {unreadAlerts}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Separador + botones derecha */}
+              <div className="flex items-center space-x-3 ml-4">
+                <div className="w-px h-6 bg-neutral-700/40 dark:bg-neutral-600/50" />
+
+                {/* BOTÓN MODO OSCURO / CLARO */}
                 <button
-                  key={tab.id}
-                  onClick={() => handleTabChange(tab.id)}
-                  className={`relative flex items-center space-x-2 px-4 py-2 rounded-lg transition-all ${
-                    activeTab === tab.id
-                         ? 'bg-white text-black shadow-lg ring-1 ring-black/10'
-                      : 'text-neutral-300 hover:bg-neutral-800 hover:text-white'
-                  }`}
+                  onClick={toggleTheme}
+                  className="relative flex items-center justify-center w-10 h-10 rounded-full bg-neutral-800 hover:bg-neutral-700 text-yellow-400 dark:text-sky-300 transition-all duration-300 shadow-inner border border-neutral-700"
+                  title={
+                    theme === "light" ? "Modo oscuro" : "Modo claro"
+                  }
                 >
-                  {tab.icon}
-                  <span className="text-sm font-medium">{tab.label}</span>
-
-                  {tab.id === 'alerts' && unreadAlerts > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
-                      {unreadAlerts}
-                    </span>
-                  )}
+                  <AnimatePresence mode="wait" initial={false}>
+                    {theme === "light" ? (
+                      <motion.div
+                        key="sun"
+                        initial={{
+                          rotate: -90,
+                          opacity: 0,
+                          scale: 0.5,
+                        }}
+                        animate={{
+                          rotate: 0,
+                          opacity: 1,
+                          scale: 1,
+                        }}
+                        exit={{
+                          rotate: 90,
+                          opacity: 0,
+                          scale: 0.5,
+                        }}
+                        transition={{ duration: 0.3 }}
+                      >
+                        <Sun size={18} />
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        key="moon"
+                        initial={{
+                          rotate: 90,
+                          opacity: 0,
+                          scale: 0.5,
+                        }}
+                        animate={{
+                          rotate: 0,
+                          opacity: 1,
+                          scale: 1,
+                        }}
+                        exit={{
+                          rotate: -90,
+                          opacity: 0,
+                          scale: 0.5,
+                        }}
+                        transition={{ duration: 0.3 }}
+                      >
+                        <Moon size={18} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </button>
-              ))}
 
-              {/* BOTÓN DE LOGOUT */}
-              <button
-                onClick={handleLogout}
-                className="flex items-center space-x-2 px-4 py-2 rounded-lg text-neutral-300 hover:bg-red-700 hover:text-white transition-all"
-              >
-                <LogOut size={20} />
-                <span className="text-sm font-medium">Salir</span>
-              </button>
+                {/* BOTÓN LOGOUT */}
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center space-x-2 px-4 py-2 rounded-lg text-neutral-300 hover:bg-red-700 hover:text-white transition-all"
+                >
+                  <LogOut size={20} />
+                  <span className="text-sm font-medium">Salir</span>
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* MENÚ MÓVIL (DESPLEGABLE) */}
+          {/* MENÚ MÓVIL */}
           {menuOpen && (
             <div className="lg:hidden pb-4 space-y-1">
-              {tabs.map(tab => (
+              {tabs.map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => handleTabChange(tab.id)}
                   className={`relative w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${
                     activeTab === tab.id
-                      ? 'bg-white text-black ring-1 ring-black/10'
-                      : 'text-neutral-300 hover:bg-neutral-800'
+                      ? "bg-white text-black ring-1 ring-black/10 dark:bg-neutral-800 dark:text-white"
+                      : "text-neutral-300 hover:bg-neutral-800"
                   }`}
                 >
                   {tab.icon}
                   <span className="font-medium">{tab.label}</span>
-
-                  {tab.id === 'alerts' && unreadAlerts > 0 && (
+                  {tab.id === "alerts" && unreadAlerts > 0 && (
                     <span className="ml-auto bg-red-500 text-white text-xs px-2 py-1 rounded-full font-bold">
                       {unreadAlerts}
                     </span>
                   )}
                 </button>
               ))}
-
-              {/* LOGOUT EN MENÚ MÓVIL */}
               <button
                 onClick={handleLogout}
                 className="w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-red-400 hover:bg-red-700 hover:text-white transition-all"
@@ -192,7 +301,9 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
       </nav>
 
       {/* CONTENIDO PRINCIPAL */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">{children}</main>
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 overflow-hidden transition-colors duration-300">
+        {children}
+      </main>
     </div>
-  )
-}
+  );
+};

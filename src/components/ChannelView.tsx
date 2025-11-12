@@ -92,6 +92,43 @@ const GUIDE_OPTIONS: Array<{ id: string; label: string }> = [
 ];
 
 const ALFA_ORDER = ["XS", "S", "M", "L", "XL", "XXL", "3XL"];
+const GARMENT_TYPE_OPTIONS: Record<string, string[]> = {
+  MLC158467: [
+    // Poleras
+    "Camiseta",
+    "Polo",
+    "Polera básica",
+    "Polera deportiva",
+    "Polera estampada",
+    "T-Shirt",
+    "Tank top",
+    "Crop top",
+    "Camisa sin mangas",
+  ],
+  MLC158382: [
+    // Polerones
+    "Polerón clásico",
+    "Hoodie",
+    "Sudadera",
+    "Polerón con cierre",
+    "Sweatshirt",
+    "Pullover",
+    "Polerón deportivo",
+  ],
+  MLC158340: [
+    // Chaquetas
+    "Chaqueta",
+    "Parka",
+    "Abrigo",
+    "Blazer",
+    "Cazadora",
+    "Rompeviento",
+    "Chaquetón",
+    "Bomber",
+    "Trench",
+    "Campera",
+  ],
+};
 
 // Guías conocidas
 const CATEGORY_GUIDE_MAP: Record<string, string> = {
@@ -103,10 +140,11 @@ const CATEGORY_GUIDE_MAP: Record<string, string> = {
   // Gorros/Accesorios sin guía de tallas
 };
 
-
 // ¿La categoría usa guía de tallas?
 
 export const ChannelView = ({ channel }: ChannelViewProps) => {
+  const [expandedFam, setExpandedFam] = useState<Record<string, boolean>>({});
+
   const categorySupportsGrid = (categoryId?: string) => {
     if (!categoryId) return false;
     return Boolean(CATEGORY_GUIDE_MAP[categoryId]); // sólo si hay guía mapeada
@@ -116,7 +154,8 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   const [color, setColor] = useState<string>("Negro");
 
   // ¿Qué categorías requieren estos atributos?
-  const categoryRequiresGarmentType = (catId: string) => catId === "MLC158340"; // Chaquetas
+  const categoryRequiresGarmentType = (catId: string) =>
+    ["MLC158340", "MLC158467", "MLC158382"].includes(catId);
   const categoryRequiresColor = (catId: string) =>
     [
       "MLC158583", // Jeans
@@ -649,6 +688,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
         "MLC158382", // Polerones
         "MLC158340", // Chaquetas
       ].includes(catId);
+
     const requiresColor = (catId: string) =>
       [
         "MLC158583", // Jeans
@@ -665,8 +705,6 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     const gridIdToUse = forcedGuide || String(sizeGridId || "");
     let rowIdToUse = String(sizeGridRowId || "");
 
-
-
     // … construir atributos
     const base = (safeDraft.attributes || []).filter(
       (a) =>
@@ -680,67 +718,86 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
         a.id !== "MAIN_MATERIAL"
     );
 
-if (requiresGrid(safeDraft.category_id)) {
-  if (!sizeValue) return setDraftError('Debes resolver la talla (SIZE).');
+    if (requiresGrid(safeDraft.category_id)) {
+      if (!sizeValue) return setDraftError("Debes resolver la talla (SIZE).");
 
-  if (!/^\d+$/.test(String(gridIdToUse))) {
-    return setDraftError(`SIZE_GRID_ID inválido: "${gridIdToUse}". Debe ser sólo dígitos (ej "3947174").`);
-  }
+      if (!/^\d+$/.test(String(gridIdToUse))) {
+        return setDraftError(
+          `SIZE_GRID_ID inválido: "${gridIdToUse}". Debe ser sólo dígitos (ej "3947174").`
+        );
+      }
 
-  if (!new RegExp(`^${gridIdToUse}:\\d+$`).test(String(sizeGridRowId))) {
-    return setDraftError(
-      `La fila de guía (${sizeGridRowId}) no corresponde a la guía ${gridIdToUse}. ` +
-      `Cambia la guía o vuelve a seleccionar la talla.`
-    );
-  }
-}
+      if (!new RegExp(`^${gridIdToUse}:\\d+$`).test(String(sizeGridRowId))) {
+        return setDraftError(
+          `La fila de guía (${sizeGridRowId}) no corresponde a la guía ${gridIdToUse}. ` +
+            `Cambia la guía o vuelve a seleccionar la talla.`
+        );
+      }
+    }
     const finalAttrs: DraftAttr[] = [...base];
 
     // SIZE + GRID (solo si aplica y son consistentes)
     // --- FASHION GRID ---
-// --- FASHION GRID ---
-// Aquí mantenemos value_name por consistencia,
-// y añadimos value_id porque ML lo exige en estos 3 atributos.
-if (requiresGrid(safeDraft.category_id)) {
-  const gridId = String(gridIdToUse).trim();       // ej: "3947174"
-  const rowId  = String(sizeGridRowId).trim();     // ej: "3947174:5"
-  const sizeVal = String(sizeValue).trim();        // ej: "42"
+    // --- FASHION GRID ---
+    // Aquí mantenemos value_name por consistencia,
+    // y añadimos value_id porque ML lo exige en estos 3 atributos.
+    if (requiresGrid(safeDraft.category_id)) {
+      const gridId = String(gridIdToUse).trim(); // ej: "3947174"
+      const rowId = String(sizeGridRowId).trim(); // ej: "3947174:5"
+      const sizeVal = String(sizeValue).trim(); // ej: "42"
 
-  // Limpia duplicados por si vienen de antes
-  const drop = (id: string) => {
-    const i = finalAttrs.findIndex(a => a.id === id);
-    if (i >= 0) finalAttrs.splice(i, 1);
-  };
-  drop('SIZE'); drop('SIZE_GRID_ID'); drop('SIZE_GRID_ROW_ID');
+      // Limpia duplicados por si vienen de antes
+      const drop = (id: string) => {
+        const i = finalAttrs.findIndex((a) => a.id === id);
+        if (i >= 0) finalAttrs.splice(i, 1);
+      };
+      drop("SIZE");
+      drop("SIZE_GRID_ID");
+      drop("SIZE_GRID_ROW_ID");
 
-  // ✅ SIZE: mantener label humano y enviar id de fila
-  finalAttrs.push({
-    id: 'SIZE',
-    value_name: sizeVal,   // "42" o "M" (consistencia en tu sistema)
-    value_id: rowId        // "3947174:5" (requisito ML)
-  });
+      // ✅ SIZE: mantener label humano y enviar id de fila
+      finalAttrs.push({
+        id: "SIZE",
+        value_name: sizeVal, // "42" o "M" (consistencia en tu sistema)
+        value_id: rowId, // "3947174:5" (requisito ML)
+      });
 
-  // ✅ SIZE_GRID_ID: número de guía
-  finalAttrs.push({
-    id: 'SIZE_GRID_ID',
-    value_name: gridId,    // lo dejamos también como string visible
-    value_id: gridId       // id numérico que valida ML
-  });
+      // ✅ SIZE_GRID_ID: número de guía
+      finalAttrs.push({
+        id: "SIZE_GRID_ID",
+        value_name: gridId, // lo dejamos también como string visible
+        value_id: gridId, // id numérico que valida ML
+      });
 
-  // ✅ SIZE_GRID_ROW_ID: "<GRID>:<ROW>"
-  finalAttrs.push({
-    id: 'SIZE_GRID_ROW_ID',
-    value_name: rowId,     // visible/consistente
-    value_id: rowId        // requerido por ML
-  });
-safeDraft.attributes = finalAttrs;
-console.debug(
-  "POST → meli-post payload",
-  JSON.parse(JSON.stringify(safeDraft))
-);
-  console.debug('→ FASHION GRID', { gridId, rowId, sizeVal });
-}
-
+      // ✅ SIZE_GRID_ROW_ID: "<GRID>:<ROW>"
+      finalAttrs.push({
+        id: "SIZE_GRID_ROW_ID",
+        value_name: rowId, // visible/consistente
+        value_id: rowId, // requerido por ML
+      });
+      safeDraft.attributes = finalAttrs;
+      console.debug(
+        "POST → meli-post payload",
+        JSON.parse(JSON.stringify(safeDraft))
+      );
+      console.debug("→ FASHION GRID", { gridId, rowId, sizeVal });
+    }
+    // dentro de confirmPublish(), antes de enviar safeDraft
+    if (
+      [
+        "MLC158583", // Jeans
+        "MLC417372", // Shorts
+        "MLC158467", // Poleras
+        "MLC158382", // Polerones
+        "MLC158340", // Chaquetas
+      ].includes(safeDraft.category_id)
+    ) {
+      finalAttrs.push({
+        id: "AGE_GROUP",
+        value_id: "6725189",
+        value_name: "Adulto",
+      });
+    }
 
     // GENDER (si aplica)
     if (requiresGender(safeDraft.category_id)) {
@@ -854,736 +911,588 @@ console.debug(
     );
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="flex items-center space-x-3">
-          <div
-            className={`p-3 bg-${config.color}-100 text-${config.color}-600 rounded-lg`}
-          >
-            {config.icon}
-          </div>
-          <div>
-            <h2 className="text-2xl font-bold text-neutral-900">
-              {config.title}
-            </h2>
-            <p className="text-sm text-neutral-600">{config.description}</p>
-          </div>
+  <div className="space-y-6 transition-colors duration-300">
+    {/* Header */}
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex items-center space-x-3">
+        <div className="p-3 bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300 rounded-lg">
+          {config.icon}
         </div>
-        <button
-          onClick={handleSyncAll}
-          disabled={syncing}
-          className="flex items-center space-x-2 px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-800 disabled:opacity-50"
-        >
-          <RefreshCw size={18} className={syncing ? "animate-spin" : ""} />
-          <span>{syncing ? "Sincronizando…" : "Sincronizar ahora"}</span>
-        </button>
-      </div>
-
-      {/* Métricas */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-neutral-600 uppercase">
-              Estado
-            </h3>
-            {connected ? (
-              <CheckCircle className="text-green-600" size={20} />
-            ) : (
-              <AlertCircle className="text-red-600" size={20} />
-            )}
-          </div>
-          {connected ? (
-            <>
-              <p className="text-2xl font-bold text-green-600">Conectado</p>
-              <p className="text-xs text-neutral-500 mt-1">
-                {health?.nickname ? `@${health.nickname} · ` : ""}
-                {typeof expiresInMin === "number"
-                  ? `expira en ${expiresInMin} min`
-                  : ""}
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="text-2xl font-bold text-red-600">Desconectado</p>
-              <p className="text-xs text-neutral-500 mt-1">
-                Conecta tu cuenta para continuar.
-              </p>
-            </>
-          )}
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-sm font-semibold text-neutral-600 uppercase mb-2">
-            Productos con stock ML
-          </h3>
-          <p className="text-2xl font-bold">{fams.length}</p>
-          <p className="text-sm text-neutral-500 mt-1">
-            agrupadas por nombre + categoría
+        <div>
+          <h2 className="text-2xl font-bold text-neutral-900 dark:text-white">
+            {config.title}
+          </h2>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {config.description}
           </p>
         </div>
-
-        <div className="bg-white rounded-xl shadow-sm border p-6">
-          <h3 className="text-sm font-semibold text-neutral-600 uppercase mb-2">
-            Stock ML Total
-          </h3>
-          <p className="text-2xl font-bold">{totalStockML}</p>
-          <p className="text-sm text-neutral-500 mt-1">unidades</p>
-        </div>
       </div>
 
-      {/* Tabla agrupada por familia con matriz de tallas */}
-      <div className="bg-white rounded-xl shadow-sm border p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-bold text-neutral-900">
-            Productos en {config.title}
-          </h3>
-          <span className="text-sm text-neutral-600">
-            Última sync: {formatDate(lastSync)}
-          </span>
-        </div>
+      <button
+        onClick={handleSyncAll}
+        disabled={syncing}
+        className="flex items-center space-x-2 px-4 py-2 bg-green-700 hover:bg-green-800 text-white rounded-lg disabled:opacity-50 transition-all"
+      >
+        <RefreshCw size={18} className={syncing ? "animate-spin" : ""} />
+        <span>{syncing ? "Sincronizando…" : "Sincronizar ahora"}</span>
+      </button>
+    </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b">
-                <th className="text-left  py-3 px-4 text-sm font-semibold">
-                  Producto
-                </th>
-                <th className="text-left  py-3 px-4 text-sm font-semibold">
-                  Tallas (Stock ML / Publicación)
-                </th>
-                <th className="text-center py-3 px-4 text-sm font-semibold">
-                  Total ML
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {fams.map((fam, idx) => {
-                const cols = columnsForFam(fam);
-                const totalFam = cols.reduce(
-                  (acc, t) => acc + (fam.byTalla[t.id]?.stockml || 0),
-                  0
-                );
+    {/* Métricas */}
+<div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+  {/* Estado */}
+  <div className="bg-white dark:bg-[#1a1a1a] rounded-xl shadow-sm border border-amber-100 dark:border-amber-800 p-6 transition-colors">
+    <div className="flex items-center justify-between mb-2">
+      <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400 uppercase">
+        Estado
+      </h3>
+      {connected ? (
+        <CheckCircle className="text-green-600 dark:text-green-400" size={20} />
+      ) : (
+        <AlertCircle className="text-red-600 dark:text-red-400" size={20} />
+      )}
+    </div>
 
-                return (
-                  <tr key={fam.name + idx} className="border-b align-top">
-                    {/* Columna nombre/categoría */}
-                    <td className="py-4 px-4 w-64">
-                      <div className="font-semibold">{fam.name}</div>
-                      <div className="text-sm text-neutral-500">
-                        {fam.categoria_nombre || "—"}
-                      </div>
-                    </td>
+    {connected ? (
+      <>
+        <p className="text-2xl font-bold text-green-600 dark:text-green-400">Conectado</p>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+          {health?.nickname ? `@${health.nickname} · ` : ""}
+          {typeof expiresInMin === "number"
+            ? `expira en ${expiresInMin} min`
+            : ""}
+        </p>
+      </>
+    ) : (
+      <>
+        <p className="text-2xl font-bold text-red-600 dark:text-red-400">Desconectado</p>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+          Conecta tu cuenta para continuar.
+        </p>
+      </>
+    )}
+  </div>
 
-                    {/* Matriz de tallas */}
-                    <td className="py-4 px-4">
-                      <div
-                        className="overflow-x-auto"
-                        style={{ minWidth: 420 }}
-                      >
-                        <div
-                          className="grid gap-y-2 gap-x-2 items-center"
-                          style={{
-                            gridTemplateColumns: `120px repeat(${cols.length}, minmax(84px, 1fr))`,
-                          }}
-                        >
-                          {/* Encabezados tallas */}
-                          <div></div>
-                          {cols.map((t) => (
-                            <div
-                              key={t.id}
-                              className="text-center text-xs text-neutral-700 font-medium"
-                            >
-                              {t.etiqueta}
-                            </div>
-                          ))}
+  {/* Productos con stock ML */}
+  <div className="bg-white dark:bg-[#1a1a1a] rounded-xl shadow-sm border border-amber-100 dark:border-amber-800 p-6 transition-colors">
+    <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400 uppercase mb-2">
+      Productos con stock ML
+    </h3>
+    <p className="text-2xl font-bold text-neutral-900 dark:text-white">{fams.length}</p>
+    <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">
+      agrupadas por nombre + categoría
+    </p>
+  </div>
 
-                          {/* Fila: Stock ML */}
-                          <div className="text-right pr-2">
-                            <span className="px-2 py-1 rounded text-xs font-semibold bg-amber-100 text-amber-700">
-                              Stock ML
-                            </span>
-                          </div>
-                          {cols.map((t) => {
-                            const p = fam.byTalla[t.id];
-                            const val = p?.stockml ?? 0;
-                            const cls =
-                              val === 0
-                                ? "text-red-600"
-                                : val < 5
-                                ? "text-orange-600"
-                                : "text-green-700";
-                            return (
-                              <div key={t.id} className="text-center">
-                                <span className={`font-semibold ${cls}`}>
-                                  {val}
-                                </span>
-                              </div>
-                            );
-                          })}
+  {/* Stock ML Total */}
+  <div className="bg-white dark:bg-[#1a1a1a] rounded-xl shadow-sm border border-amber-100 dark:border-amber-800 p-6 transition-colors">
+    <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400 uppercase mb-2">
+      Stock ML Total
+    </h3>
+    <p className="text-2xl font-bold text-neutral-900 dark:text-white">{totalStockML}</p>
+    <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">unidades</p>
+  </div>
+</div>
 
-                          {/* Fila: Publicación / Acción */}
-                          <div className="text-right pr-2">
-                            <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 text-neutral-700">
-                              Publicación
-                            </span>
-                          </div>
-                          {cols.map((t) => {
-                            const p = fam.byTalla[t.id];
-                            if (!p)
-                              return (
-                                <div
-                                  key={t.id}
-                                  className="text-center text-neutral-400"
-                                >
-                                  —
-                                </div>
-                              );
-                            const published = isSkuPublished(p.sku);
-                            const activeItemId = firstActiveItemId(p.sku);
-                            return (
-                              <div key={t.id} className="text-center">
-                                {published && activeItemId ? (
-                                  <a
-                                    className="bg-green-50 text-green-700 text-[11px] font-semibold px-2 py-1 rounded-full inline-flex items-center gap-1"
-                                    href={`https://articulo.mercadolibre.cl/${activeItemId}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    <LinkIcon size={12} />
-                                    <span>Publicado</span>
-                                  </a>
-                                ) : (
-                                  <button
-                                    onClick={() => handleCellAction(p)}
-                                    disabled={!connected || rowBusy === p.sku}
-                                    className={`text-[11px] font-semibold px-2 py-1 rounded-full inline-flex items-center gap-1 text-white
-                                      ${
-                                        published
-                                          ? "bg-blue-600 hover:bg-blue-700"
-                                          : "bg-amber-600 hover:bg-amber-700"
-                                      }
-                                      disabled:opacity-50`}
-                                    title={
-                                      published
-                                        ? "Refrescar ML"
-                                        : "Publicar en ML"
-                                    }
-                                  >
-                                    {rowBusy === p.sku ? (
-                                      <RefreshCw
-                                        size={12}
-                                        className="animate-spin"
-                                      />
-                                    ) : published ? (
-                                      <Repeat size={12} />
-                                    ) : (
-                                      <Upload size={12} />
-                                    )}
-                                    <span>
-                                      {published ? "Refrescar" : "Publicar"}
-                                    </span>
-                                  </button>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </td>
 
-                    {/* Total por familia */}
-                    <td className="py-4 px-4 text-center font-bold">
-                      {totalFam}
-                    </td>
-                  </tr>
-                );
-              })}
+      {/* Tarjetas de productos con detalle de tallas */}
+<div className="bg-white dark:bg-neutral-900 rounded-xl p-6 border border-neutral-200 dark:border-neutral-700 transition-colors">
+  <div className="flex items-center justify-between mb-6">
+    <h3 className="text-lg font-bold text-neutral-900 dark:text-white">
+      Productos en {config.title}
+    </h3>
+    <span className="text-sm text-neutral-600 dark:text-neutral-400">
+      Última sync: {formatDate(lastSync)}
+    </span>
+  </div>
 
-              {fams.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="text-center py-6 text-neutral-500">
-                    No hay productos para mostrar.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+  {fams.length === 0 ? (
+    <div className="text-center py-12 text-neutral-500 dark:text-neutral-400">
+      No hay productos para mostrar.
+    </div>
+  ) : (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      {fams.map((fam, idx) => {
+        const cols = columnsForFam(fam);
+        const totalFam = cols.reduce(
+          (acc, t) => acc + (fam.byTalla[t.id]?.stockml || 0),
+          0
+        );
 
-      {/* Modal de previsualización */}
-      {showPreview && draft && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 border-b">
-              <h3 className="font-semibold">Previsualizar publicación</h3>
+        const firstSkuProduct = Object.values(fam.byTalla)[0];
+        const hasAnyPublished =
+          firstSkuProduct &&
+          Object.values(fam.byTalla).some((p) => isSkuPublished(p.sku));
+
+        const famKey = `${fam.name}::${fam.categoria_id ?? 0}::${fam.tipo}`;
+        const isOpen = !!expandedFam[famKey];
+
+        const toggle = () =>
+          setExpandedFam((prev) => ({
+            ...prev,
+            [famKey]: !prev[famKey],
+          }));
+
+        const sampleImg =
+          "https://http2.mlstatic.com/D_NQ_NP_2X_954300-MLC54978809383_042023-F.webp";
+
+        return (
+          <div
+            key={famKey + idx}
+            className="bg-amber-50 dark:bg-neutral-800 border border-amber-100 dark:border-amber-800 rounded-2xl shadow-sm hover:shadow-md overflow-hidden transition flex flex-col"
+          >
+            {/* Imagen */}
+            <div className="aspect-[4/3] bg-white dark:bg-neutral-900 flex items-center justify-center">
+              <img
+                src={sampleImg}
+                alt={fam.name}
+                className="object-contain h-full w-full"
+              />
+            </div>
+
+            {/* Header tarjeta */}
+            <div className="p-4 flex flex-col gap-2">
+          <div className="flex justify-between items-start">
+            <div>
+              <h4 className="font-semibold text-neutral-900 dark:text-white line-clamp-2">
+                {fam.name}
+              </h4>
+              <p className="text-sm text-neutral-500 dark:text-neutral-400">
+                {fam.categoria_nombre || "Sin categoría"}
+              </p>
+            </div>
+            <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+              {new Intl.NumberFormat("es-CL", {
+                style: "currency",
+                currency: "CLP",
+              }).format(Object.values(fam.byTalla)[0]?.price || 0)}
+            </p>
+          </div>
+
+              {/* Métricas rápidas */}
+              <div className="flex items-center justify-between text-xs mt-1">
+                <div className="flex flex-col">
+                  <span className="text-neutral-500 dark:text-neutral-400">
+                    Stock ML total
+                  </span>
+                  <span
+                    className={`text-sm font-bold ${
+                      totalFam === 0
+                        ? "text-red-600 dark:text-red-400"
+                        : totalFam < 5
+                        ? "text-orange-500 dark:text-orange-400"
+                        : "text-green-700 dark:text-green-400"
+                    }`}
+                  >
+                    {totalFam} unid.
+                  </span>
+                </div>
+
+                {firstSkuProduct && (
+                  <div className="text-right">
+                    <span className="text-neutral-500 dark:text-neutral-400 block">
+                      Desde
+                    </span>
+                    <span className="text-sm font-semibold text-neutral-900 dark:text-white">
+                      {new Intl.NumberFormat("es-CL", {
+                        style: "currency",
+                        currency: "CLP",
+                      }).format(firstSkuProduct.price || 0)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Botón para ver tallas / acciones */}
               <button
-                onClick={() => setShowPreview(false)}
-                className="p-1 rounded hover:bg-neutral-100"
+                onClick={toggle}
+                className="mt-3 w-full flex items-center justify-between px-3 py-2 rounded-lg bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800 text-amber-800 dark:text-amber-300 text-xs font-semibold transition"
               >
-                <X size={18} />
+                <span>
+                  {isOpen
+                    ? "Ocultar tallas y acciones"
+                    : "Gestionar tallas y publicaciones"}
+                </span>
+                <span
+                  className={`transform transition ${
+                    isOpen ? "rotate-180" : "rotate-0"
+                  }`}
+                >
+                  ˅
+                </span>
               </button>
             </div>
 
-            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Formulario */}
-              <div className="space-y-3">
-                <label className="text-sm text-neutral-600">Título</label>
-                <input
-                  className="w-full border rounded-xl p-3"
-                  value={draft.title}
-                  onChange={(e) =>
-                    setDraft({ ...draft, title: e.target.value })
-                  }
-                />
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm text-neutral-600">Precio</label>
-                    <input
-                      className="w-full border rounded-xl p-3"
-                      type="number"
-                      value={draft.price}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          price: Number(e.target.value) || 0,
-                        })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm text-neutral-600">Cantidad</label>
-                    <input
-                      className="w-full border rounded-xl p-3"
-                      type="number"
-                      value={draft.available_quantity}
-                      onChange={(e) =>
-                        setDraft({
-                          ...draft,
-                          available_quantity: Number(e.target.value) || 0,
-                        })
-                      }
-                    />
-                  </div>
+            {/* Panel expandible con tallas */}
+            {isOpen && (
+              <div className="px-4 pb-4 border-t border-neutral-100 dark:border-neutral-700 text-xs">
+                <div className="grid grid-cols-[1.2fr,1.1fr,0.9fr,1.3fr,1.3fr] gap-2 py-2 text-[10px] text-neutral-500 dark:text-neutral-400 font-semibold">
+                  <div>Talla</div>
+                  <div>SKU</div>
+                  <div className="text-center">Stock ML</div>
+                  <div>Estado ML</div>
+                  <div className="text-center">Acción</div>
                 </div>
 
-                {/* Categoría (asignada automáticamente) */}
-                <label className="text-sm text-neutral-600">Categoría</label>
-                <div className="w-full border rounded-xl p-3 bg-neutral-50">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-medium">
-                        {draftCatName ||
-                          currentProductRef.current?.categoria_nombre ||
-                          "—"}
-                      </div>
-                      <div className="text-xs text-neutral-500">
-                        {draft.category_id} · valor asignado para Mercado Libre
-                      </div>
-                    </div>
-                    <span className="text-[11px] px-2 py-1 rounded-full bg-amber-100 text-amber-700 font-semibold">
-                      Asignada automáticamente
-                    </span>
-                  </div>
-                </div>
+                {cols.map((t) => {
+                  const p = fam.byTalla[t.id];
+                  if (!p) return null;
 
-                {/* Guía de tallas + Talla resultante */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm text-neutral-600">
-                      Guía de tallas (ML)
-                    </label>
-                    <select
-                      className="w-full border rounded-xl p-3"
-                      value={selectedGuideId}
-                      onChange={async (e) => {
-                        const gid = e.target.value;
-                        setSelectedGuideId(gid);
-                        if (gid) {
-                          // usa draft?.category_id actual para evitar doble click
-                          await recomputeSizeByGuide(gid, draft?.category_id);
-                        }
-                      }}
+                  const published = isSkuPublished(p.sku);
+                  const activeItemId = firstActiveItemId(p.sku);
+                  const stock = p.stockml || 0;
+
+                  const stockColor =
+                    stock === 0
+                      ? "text-red-600 dark:text-red-400"
+                      : stock < 5
+                      ? "text-orange-500 dark:text-orange-400"
+                      : "text-green-700 dark:text-green-400";
+
+                  return (
+                    <div
+                      key={t.id}
+                      className="grid grid-cols-[1.2fr,1.1fr,0.9fr,1.3fr,1.3fr] gap-2 items-center py-1.5 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-800"
                     >
-                      <option value="">(usar guía por categoría)</option>
-                      {GUIDE_OPTIONS.map((g) => (
-                        <option key={g.id} value={g.id}>
-                          {g.label} · {g.id}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-neutral-500 mt-1">
-                      Guía actual:{" "}
-                      <strong>
-                        {selectedGuideId || "(auto por categoría)"}
-                      </strong>
-                    </p>
-                  </div>
+                      {/* Talla */}
+                      <div className="font-semibold text-neutral-800 dark:text-neutral-200">
+                        {t.etiqueta}
+                      </div>
 
-                  <div>
-                    <label className="text-sm text-neutral-600">
-                      Talla a publicar
-                    </label>
-                    <div className="w-full border rounded-xl p-3 bg-neutral-50">
-                      <span className="font-semibold">{sizeValue || "—"}</span>
-                    </div>
-                    <p className="text-xs text-neutral-500 mt-1">
-                      Se enviará en el atributo <code>SIZE</code>.
-                    </p>
-                  </div>
-                </div>
+                      {/* SKU */}
+                      <div className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate">
+                        {p.sku}
+                      </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm text-neutral-600">
-                      Marca (BRAND)
-                    </label>
-                    <input
-                      className="w-full border rounded-xl p-3"
-                      value={
-                        draft.attributes.find((a) => a.id === "BRAND")
-                          ?.value_name || ""
-                      }
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        const attrs = draft.attributes.slice();
-                        const i = attrs.findIndex((a) => a.id === "BRAND");
-                        if (i >= 0) attrs[i] = { id: "BRAND", value_name: v };
-                        else attrs.push({ id: "BRAND", value_name: v });
-                        setDraft({ ...draft, attributes: attrs });
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm text-neutral-600">
-                      Modelo (MODEL)
-                    </label>
-                    <input
-                      className="w-full border rounded-xl p-3"
-                      value={
-                        draft.attributes.find((a) => a.id === "MODEL")
-                          ?.value_name || ""
-                      }
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        const attrs = draft.attributes.slice();
-                        const i = attrs.findIndex((a) => a.id === "MODEL");
-                        if (i >= 0) attrs[i] = { id: "MODEL", value_name: v };
-                        else attrs.push({ id: "MODEL", value_name: v });
-                        setDraft({ ...draft, attributes: attrs });
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {/* Color (COLOR) — solo si la categoría lo requiere */}
-                {categoryRequiresColor(draft?.category_id || "") && (
-                  <div className="relative">
-                    <label className="text-sm text-neutral-600">
-                      Color (COLOR)
-                    </label>
-                    <button
-                      type="button"
-                      className="w-full border rounded-xl p-3 flex items-center justify-between hover:bg-neutral-50"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        const menu = e.currentTarget
-                          .nextSibling as HTMLDivElement | null;
-                        if (menu) menu.classList.toggle("hidden");
-                      }}
-                    >
-                      <span className="flex items-center gap-2">
-                        {/* Swatch actual */}
-                        <span
-                          aria-hidden
-                          className="inline-block w-4 h-4 rounded border"
-                          style={{
-                            background: COLOR_OPTIONS.find(
-                              (c) => c.key === colorKey
-                            )?.hex,
-                            borderColor: COLOR_OPTIONS.find(
-                              (c) => c.key === colorKey
-                            )?.border
-                              ? "#D1D5DB"
-                              : "transparent",
-                          }}
-                        />
-                        <span>{colorLabel}</span>
-                      </span>
-                      <span className="text-xs text-neutral-500">Cambiar</span>
-                    </button>
-
-                    {/* Menú desplegable */}
-                    <div className="absolute z-20 mt-1 w-full bg-white border rounded-lg shadow hidden max-h-64 overflow-auto">
-                      {COLOR_OPTIONS.map((opt) => (
-                        <button
-                          type="button"
-                          key={opt.key}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            setColorKey(opt.key);
-                            (
-                              e.currentTarget.parentElement as HTMLDivElement
-                            )?.classList.add("hidden");
-                          }}
-                          className="w-full text-left px-3 py-2 hover:bg-neutral-50 flex items-center gap-2"
-                        >
-                          <span
-                            aria-hidden
-                            className="inline-block w-4 h-4 rounded border"
-                            style={{
-                              background: opt.hex,
-                              borderColor: opt.border
-                                ? "#D1D5DB"
-                                : "transparent",
-                            }}
-                          />
-                          <span className="text-sm">{opt.label}</span>
-                        </button>
-                      ))}
-                    </div>
-
-                    <p className="text-xs text-neutral-500 mt-1">
-                      Se envía como <code>COLOR</code>.
-                    </p>
-                  </div>
-                )}
-
-                {/* Género (ML) */}
-                <div>
-                  <label className="text-sm text-neutral-600">
-                    Género (ML)
-                  </label>
-                  <select
-                    className="w-full border rounded-xl p-3"
-                    value={gender}
-                    onChange={(e) =>
-                      setGender(e.target.value as "unisex" | "male" | "female")
-                    }
-                  >
-                    {GENDER_OPTIONS.map((opt) => (
-                      <option key={opt.key} value={opt.key}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-neutral-500 mt-1">
-                    Se enviará en el atributo <code>GENDER</code>.
-                  </p>
-                </div>
-                {/* Tipo de prenda (GARMENT_TYPE) — SOLO si la categoría lo requiere */}
-                {categoryRequiresGarmentType(draft?.category_id || "") && (
-                  <div>
-                    <label className="text-sm text-neutral-600">
-                      Tipo de prenda (GARMENT_TYPE)
-                    </label>
-                    <input
-                      className="w-full border rounded-xl p-3"
-                      value={garmentType}
-                      onChange={(e) => setGarmentType(e.target.value)}
-                      placeholder="Chaqueta, Parka, Cazadora…"
-                    />
-                    <p className="text-xs text-neutral-500 mt-1">
-                      Requerido en esta categoría. Se envía como{" "}
-                      <code>GARMENT_TYPE</code>.
-                    </p>
-                  </div>
-                )}
-
-                {/* Solo mostrar si la categoría es pantalones (Jeans) */}
-                {draft?.category_id === "MLC158583" && (
-                  <>
-                    <div>
-                      <label className="text-sm text-neutral-600">
-                        Tipo de pantalón (PANT_TYPE)
-                      </label>
-                      <select
-                        className="w-full border rounded-xl p-3"
-                        value={pantType}
-                        onChange={(e) => setPantType(e.target.value)}
+                      {/* Stock */}
+                      <div
+                        className={`text-center text-[11px] font-semibold ${stockColor}`}
                       >
-                        <option value="">Selecciona un tipo…</option>
-                        {PANT_TYPE_OPTIONS.map((opt) => (
-                          <option key={opt.key} value={opt.key}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="text-xs text-neutral-500 mt-1">
-                        Requerido solo en <strong>Pantalones</strong>. Se envía
-                        como <code>PANT_TYPE</code>.
-                      </p>
-                    </div>
+                        {stock}
+                      </div>
 
-                    <div>
-                      <label className="text-sm text-neutral-600">
-                        Material principal (MAIN_MATERIAL)
-                      </label>
-                      <input
-                        className="w-full border rounded-xl p-3"
-                        value={mainMaterial}
-                        onChange={(e) => setMainMaterial(e.target.value)}
-                        placeholder="Algodón, Denim, Poliéster..."
-                      />
-                      <p className="text-xs text-neutral-500 mt-1">
-                        Requerido solo en <strong>Pantalones</strong>. Se envía
-                        como <code>MAIN_MATERIAL</code>.
-                      </p>
-                    </div>
-                  </>
-                )}
+                      {/* Estado */}
+                      <div className="text-[10px]">
+                        {published && activeItemId ? (
+                          <a
+                            href={`https://articulo.mercadolibre.cl/${activeItemId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300"
+                          >
+                            <LinkIcon size={10} />
+                            <span>Publicado</span>
+                          </a>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400">
+                            Sin publicar
+                          </span>
+                        )}
+                      </div>
 
-                {draftError && (
-                  <p className="text-sm text-red-600">{draftError}</p>
-                )}
-
-                <div className="flex gap-2 pt-2">
-                  <button
-                    onClick={confirmPublish}
-                    disabled={draftSending}
-                    className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 rounded-lg disabled:opacity-50"
-                  >
-                    {draftSending ? "Publicando…" : "Publicar ahora"}
-                  </button>
-                  <button
-                    onClick={() => setShowPreview(false)}
-                    className="px-4 py-2 rounded-lg border hover:bg-neutral-50"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-
-              {/* Vista previa + dropzone */}
-              <div className="border rounded-xl p-4">
-                <p className="text-xs text-neutral-500 mb-2">Imágenes</p>
-
-                <div
-                  className={`bg-neutral-100 h-40 flex items-center justify-center relative rounded-md border-2 ${
-                    isDragging
-                      ? "border-amber-500 border-dashed bg-amber-50"
-                      : "border-transparent"
-                  }`}
-                  onDragEnter={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    dragCounter.current++;
-                    setIsDragging(true);
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-                  }}
-                  onDragLeave={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    dragCounter.current = Math.max(0, dragCounter.current - 1);
-                    if (dragCounter.current === 0) setIsDragging(false);
-                  }}
-                  onDrop={async (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    dragCounter.current = 0;
-                    setIsDragging(false);
-                    try {
-                      const file = e.dataTransfer?.files?.[0];
-                      if (!file) return;
-                      if (!file.type.startsWith("image/"))
-                        throw new Error("Solo se permiten imágenes");
-                      const url = await uploadFileToStorage(file);
-                      setDraft((d) =>
-                        d ? { ...d, pictures: [url, ...d.pictures] } : d
-                      );
-                    } catch (err: any) {
-                      setDraftError(
-                        err?.message || "No se pudo cargar la imagen"
-                      );
-                    }
-                  }}
-                >
-                  <img
-                    src={
-                      draft.pictures[0] ||
-                      "https://http2.mlstatic.com/D_NQ_NP_2X_000000-MLC0000000000_000000-F.jpg"
-                    }
-                    alt="preview"
-                    className="h-full object-contain"
-                  />
-                  {isDragging && (
-                    <div className="absolute inset-0 flex items-center justify-center text-sm font-medium text-amber-700">
-                      Suelta la imagen para subirla
-                    </div>
-                  )}
-                </div>
-
-                {draft.pictures.length > 0 && (
-                  <div className="mt-4 grid grid-cols-4 gap-3">
-                    {draft.pictures.map((url, i) => (
-                      <div key={url + i} className="relative group">
-                        <img
-                          src={url}
-                          className="h-20 w-full object-cover rounded-md border"
-                        />
+                      {/* Acción */}
+                      <div className="flex justify-center">
                         <button
-                          title="Eliminar"
-                          onClick={() =>
-                            setDraft((d) =>
-                              d
-                                ? {
-                                    ...d,
-                                    pictures: d.pictures.filter(
-                                      (_, idx) => idx !== i
-                                    ),
-                                  }
-                                : d
-                            )
+                          onClick={() => handleCellAction(p)}
+                          disabled={!connected || rowBusy === p.sku}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold text-white transition
+                            ${
+                              published
+                                ? "bg-blue-600 hover:bg-blue-700"
+                                : "bg-amber-600 hover:bg-amber-700"
+                            }
+                            disabled:opacity-40`}
+                          title={
+                            published
+                              ? "Refrescar publicación en Mercado Libre"
+                              : "Publicar esta talla en Mercado Libre"
                           }
-                          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition bg-white/80 rounded-full p-1 shadow"
                         >
-                          <Trash2 size={14} />
+                          {rowBusy === p.sku ? (
+                            <RefreshCw size={10} className="animate-spin" />
+                          ) : published ? (
+                            <Repeat size={10} />
+                          ) : (
+                            <Upload size={10} />
+                          )}
+                          <span>{published ? "Refrescar" : "Publicar"}</span>
                         </button>
                       </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="p-3 space-y-1 mt-4 border rounded-lg">
-                  <div className="text-sm text-neutral-500">
-                    {draft.category_id} · valor asignado para Mercado Libre
-                  </div>
-                  <div className="font-semibold">{draft.title}</div>
-                  <div className="text-lg font-bold">
-                    {new Intl.NumberFormat("es-CL", {
-                      style: "currency",
-                      currency: "CLP",
-                    }).format(draft.price || 0)}
-                  </div>
-                  <div className="text-sm text-neutral-600">
-                    Stock: {draft.available_quantity} ·{" "}
-                    {draft.condition === "new" ? "Nuevo" : "Usado"}
-                  </div>
-                  <div className="text-xs text-neutral-500">
-  Atributos:{' '}
-  {draft.attributes
-    .map((a) => `${a.id}=${a.value_id ?? a.value_name ?? '(sin valor)'}`)
-    .join(', ')}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  )}
 </div>
 
-                </div>
 
-                <p className="text-xs text-neutral-500 mt-3">
-                  El resultado final puede variar según validaciones de Mercado
-                  Libre.
-                </p>
-              </div>
+      {/* Modal de previsualización */}
+{showPreview && draft && (
+  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 transition-colors">
+    <div className="w-full max-w-3xl bg-white dark:bg-neutral-900 rounded-2xl shadow-xl overflow-hidden border border-neutral-200 dark:border-neutral-700">
+      {/* Header modal */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200 dark:border-neutral-700">
+        <h3 className="font-semibold text-neutral-900 dark:text-white">
+          Previsualizar publicación
+        </h3>
+        <button
+          onClick={() => setShowPreview(false)}
+          className="p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300"
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Formulario */}
+        <div className="space-y-3">
+          <label className="text-sm text-neutral-700 dark:text-neutral-300">
+            Título
+          </label>
+          <input
+            className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+            value={draft.title}
+            onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+          />
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm text-neutral-700 dark:text-neutral-300">
+                Precio
+              </label>
+              <input
+                className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                type="number"
+                value={draft.price}
+                onChange={(e) =>
+                  setDraft({ ...draft, price: Number(e.target.value) || 0 })
+                }
+              />
+            </div>
+            <div>
+              <label className="text-sm text-neutral-700 dark:text-neutral-300">
+                Cantidad
+              </label>
+              <input
+                className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                type="number"
+                value={draft.available_quantity}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    available_quantity: Number(e.target.value) || 0,
+                  })
+                }
+              />
             </div>
           </div>
+
+          {/* Categoría (asignada automáticamente) */}
+          <label className="text-sm text-neutral-700 dark:text-neutral-300">
+            Categoría
+          </label>
+          <div className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium">
+                  {draftCatName ||
+                    currentProductRef.current?.categoria_nombre ||
+                    "—"}
+                </div>
+                <div className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {draft.category_id} · valor asignado para Mercado Libre
+                </div>
+              </div>
+              <span className="text-[11px] px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-semibold">
+                Asignada automáticamente
+              </span>
+            </div>
+          </div>
+
+          {/* Guía de tallas + Talla resultante */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm text-neutral-700 dark:text-neutral-300">
+                Guía de tallas (ML)
+              </label>
+              <select
+                className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                value={selectedGuideId}
+                onChange={async (e) => {
+                  const gid = e.target.value;
+                  setSelectedGuideId(gid);
+                  if (gid) await recomputeSizeByGuide(gid, draft?.category_id);
+                }}
+              >
+                <option value="">(usar guía por categoría)</option>
+                {GUIDE_OPTIONS.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.label} · {g.id}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                Guía actual:{" "}
+                <strong>
+                  {selectedGuideId || "(auto por categoría)"}
+                </strong>
+              </p>
+            </div>
+
+            <div>
+              <label className="text-sm text-neutral-700 dark:text-neutral-300">
+                Talla a publicar
+              </label>
+              <div className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white">
+                <span className="font-semibold">{sizeValue || "—"}</span>
+              </div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                Se enviará en el atributo <code>SIZE</code>.
+              </p>
+            </div>
+          </div>
+
+          {draftError && (
+            <p className="text-sm text-red-600 dark:text-red-400">
+              {draftError}
+            </p>
+          )}
+
+          <div className="flex gap-2 pt-2">
+            <button
+              onClick={confirmPublish}
+              disabled={draftSending}
+              className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 rounded-lg disabled:opacity-50 transition-all"
+            >
+              {draftSending ? "Publicando…" : "Publicar ahora"}
+            </button>
+            <button
+              onClick={() => setShowPreview(false)}
+              className="px-4 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200"
+            >
+              Cancelar
+            </button>
+          </div>
         </div>
-      )}
+
+        {/* Vista previa + dropzone */}
+        <div className="border border-neutral-300 dark:border-neutral-700 rounded-xl p-4 bg-neutral-50 dark:bg-neutral-800 transition-colors">
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-2">
+            Imágenes
+          </p>
+
+          <div
+            className={`h-40 flex items-center justify-center relative rounded-md border-2 ${
+              isDragging
+                ? "border-amber-500 border-dashed bg-amber-50 dark:bg-amber-900/20"
+                : "border-transparent"
+            }`}
+            onDragEnter={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              dragCounter.current++;
+              setIsDragging(true);
+            }}
+            onDragOver={(e) => e.preventDefault()}
+            onDragLeave={(e) => {
+              dragCounter.current = Math.max(0, dragCounter.current - 1);
+              if (dragCounter.current === 0) setIsDragging(false);
+            }}
+            onDrop={async (e) => {
+              e.preventDefault();
+              dragCounter.current = 0;
+              setIsDragging(false);
+              try {
+                const file = e.dataTransfer?.files?.[0];
+                if (!file) return;
+                if (!file.type.startsWith("image/"))
+                  throw new Error("Solo se permiten imágenes");
+                const url = await uploadFileToStorage(file);
+                setDraft((d) =>
+                  d ? { ...d, pictures: [url, ...d.pictures] } : d
+                );
+              } catch (err: any) {
+                setDraftError(err?.message || "No se pudo cargar la imagen");
+              }
+            }}
+          >
+            <img
+              src={
+                draft.pictures[0] ||
+                "https://http2.mlstatic.com/D_NQ_NP_2X_000000-MLC0000000000_000000-F.jpg"
+              }
+              alt="preview"
+              className="h-full object-contain"
+            />
+            {isDragging && (
+              <div className="absolute inset-0 flex items-center justify-center text-sm font-medium text-amber-700 dark:text-amber-300">
+                Suelta la imagen para subirla
+              </div>
+            )}
+          </div>
+
+          {draft.pictures.length > 0 && (
+            <div className="mt-4 grid grid-cols-4 gap-3">
+              {draft.pictures.map((url, i) => (
+                <div key={url + i} className="relative group">
+                  <img
+                    src={url}
+                    className="h-20 w-full object-cover rounded-md border border-neutral-300 dark:border-neutral-700"
+                  />
+                  <button
+                    title="Eliminar"
+                    onClick={() =>
+                      setDraft((d) =>
+                        d
+                          ? {
+                              ...d,
+                              pictures: d.pictures.filter((_, idx) => idx !== i),
+                            }
+                          : d
+                      )
+                    }
+                    className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition bg-white/80 dark:bg-neutral-800/80 rounded-full p-1 shadow"
+                  >
+                    <Trash2 size={14} className="text-neutral-700 dark:text-neutral-300" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="p-3 space-y-1 mt-4 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900">
+            <div className="text-sm text-neutral-500 dark:text-neutral-400">
+              {draft.category_id} · valor asignado para Mercado Libre
+            </div>
+            <div className="font-semibold text-neutral-900 dark:text-white">
+              {draft.title}
+            </div>
+            <div className="text-lg font-bold text-amber-700 dark:text-amber-400">
+              {new Intl.NumberFormat("es-CL", {
+                style: "currency",
+                currency: "CLP",
+              }).format(draft.price || 0)}
+            </div>
+            <div className="text-sm text-neutral-600 dark:text-neutral-400">
+              Stock: {draft.available_quantity} ·{" "}
+              {draft.condition === "new" ? "Nuevo" : "Usado"}
+            </div>
+          </div>
+
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-3">
+            El resultado final puede variar según validaciones de Mercado Libre.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
     </div>
   );
 };
