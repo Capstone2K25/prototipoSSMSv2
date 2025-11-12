@@ -10,6 +10,7 @@ node_modules
 dist
 dist-ssr
 *.local
+placeholder-b2b
 
 .vscode/*
 !.vscode/extensions.json
