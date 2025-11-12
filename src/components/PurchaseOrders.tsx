@@ -1,514 +1,223 @@
-import { useState, useEffect } from 'react';
-import { FileText, Upload, Download, Plus, CheckCircle, Clock, Package as PackageIcon, Minus } from 'lucide-react';
-import { supabase } from '../supabaseClient';
+// src/components/PurchaseOrders.tsx
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { b2bSyncDown, type B2bItem } from "../data/b2b";
 
-type OrderStatus = 'draft' | 'pending' | 'confirmed' | 'completed';
+type SortKey = "id" | "name" | "sku" | "price" | "stock_quantity" | "status" | "type";
 
-interface Product {
-  id: string;
-  name: string;
-  sku: string;
-  description: string;
-  price: number;
-  stockMadre: number;
-}
+export default function PurchaseOrders() {
+  // ===== Estado B2B =====
+  const [b2bLoading, setB2bLoading] = useState(false);
+  const [b2bError, setB2bError] = useState<string | null>(null);
+  const [b2bProducts, setB2bProducts] = useState<B2bItem[]>([]);
+  const [lastSync, setLastSync] = useState<Date | null>(null);
 
-interface OrderItem {
-  productId: string;
-  productName: string;
-  sku: string;
-  description: string;
-  quantity: number;
-  unitPrice: number;
-  total: number;
-}
+  // ===== UI helpers (búsqueda/orden) =====
+  const [q, setQ] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("id");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
-interface B2BOrder {
-  id: string;
-  clientName: string;
-  clientRUT: string;
-  status: OrderStatus;
-  items: OrderItem[];
-  subtotal: number;
-  date: string;
-  notes: string;
-}
+  const filtered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    let rows = [...b2bProducts];
 
-export const PurchaseOrders = () => {
-  const [orders, setOrders] = useState<B2BOrder[]>([]);
-  const [productStock, setProductStock] = useState<Product[]>([]);
-  const [showLoadOrderModal, setShowLoadOrderModal] = useState(false);
-
-  // Formatos auxiliares
-  const formatPrice = (price: number) =>
-    new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(price);
-
-  const formatDate = (dateString: string) =>
-    new Date(dateString).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' });
-
-  const getStatusConfig = (status: B2BOrder['status']) => {
-    const configs = {
-      draft: { label: 'Borrador', color: 'text-neutral-700', bg: 'bg-neutral-100', icon: <FileText size={14} /> },
-      pending: { label: 'Pendiente', color: 'text-orange-700', bg: 'bg-orange-50', icon: <Clock size={14} /> },
-      confirmed: { label: 'Confirmada', color: 'text-blue-700', bg: 'bg-blue-50', icon: <CheckCircle size={14} /> },
-      completed: { label: 'Completada', color: 'text-green-700', bg: 'bg-green-50', icon: <PackageIcon size={14} /> }
-    };
-    return configs[status];
-  };
-
-  // Cargar productos y órdenes desde Supabase al inicio
-  useEffect(() => {
-    const fetchData = async () => {
-      const { data: products, error: productError } = await supabase.from('productos').select('*');
-      if (productError) console.error(productError);
-      else setProductStock(products as Product[]);
-
-      const { data: ordersData, error: ordersError } = await supabase
-        .from('orders')
-        .select('*, order_items(*)')
-        .order('created_at', { ascending: false });
-
-      if (ordersError) console.error(ordersError);
-      else {
-        const adapted = ordersData.map((o: any) => ({
-          id: o.order_code,
-          clientName: o.client_name,
-          clientRUT: o.client_rut,
-          status: o.status,
-          items: o.order_items.map((i: any) => ({
-            productId: i.product_id,
-            productName: i.product_name,
-            sku: i.sku,
-            description: i.description,
-            quantity: i.quantity,
-            unitPrice: i.unit_price,
-            total: i.total
-          })),
-          subtotal: o.subtotal,
-          date: o.date,
-          notes: o.notes
-        }));
-        setOrders(adapted);
-      }
-    };
-    fetchData();
-  }, []);
-
-  // Generar orden en blanco (descargar CSV)
-  const generateBlankOrder = () => {
-    const orderTemplate = {
-      id: `B2B-${String(orders.length + 1).padStart(3, '0')}`,
-      clientName: '[Nombre del Cliente]',
-      clientRUT: '[RUT]',
-      status: 'draft' as const,
-      items: productStock.map(product => ({
-        productId: product.id,
-        productName: product.name,
-        sku: product.sku,
-        description: product.description,
-        quantity: 0,
-        unitPrice: product.price,
-        total: 0
-      })),
-      subtotal: 0,
-      date: new Date().toISOString().split('T')[0],
-      notes: ''
-    };
-
-    const csvContent = [
-      ['ORDEN DE COMPRA B2B - OldTree'],
-      ['ID Orden', orderTemplate.id],
-      ['Fecha', orderTemplate.date],
-      [''],
-      ['Cliente:', orderTemplate.clientName],
-      ['RUT:', orderTemplate.clientRUT],
-      [''],
-      ['SKU', 'Producto', 'Descripción', 'Precio Unit.', 'Cantidad', 'Total'],
-      ...orderTemplate.items.map(item => [
-        item.sku,
-        item.productName,
-        item.description,
-        item.unitPrice,
-        '',
-        ''
-      ]),
-      [''],
-      ['SUBTOTAL', '', '', '', '', ''],
-      [''],
-      ['Notas:']
-    ]
-      .map(row => row.join(','))
-      .join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `OC_Blank_${orderTemplate.id}_${orderTemplate.date}.csv`;
-    link.click();
-  };
-
-  // Simulación de carga (puedes reemplazar por upload real)
-  const simulateLoadOrder = () => {
-    const newOrder: B2BOrder = {
-      id: `B2B-${String(orders.length + 1).padStart(3, '0')}`,
-      clientName: 'Nueva Tienda Demo',
-      clientRUT: '78.456.123-9',
-      status: 'pending',
-      items: [
-        {
-          productId: '1',
-          productName: 'Hoodie OldTree Classic Black',
-          sku: 'OT-HD-001',
-          description: 'Hoodie negro con logo bordado',
-          quantity: 5,
-          unitPrice: 42990,
-          total: 214950
-        },
-        {
-          productId: '8',
-          productName: 'Buzo Crewneck Forest',
-          sku: 'OT-SW-008',
-          description: 'Buzo cuello redondo verde bosque',
-          quantity: 3,
-          unitPrice: 36990,
-          total: 110970
-        }
-      ],
-      subtotal: 325920,
-      date: new Date().toISOString().split('T')[0],
-      notes: 'Orden simulada cargada desde Excel'
-    };
-
-    setOrders([...orders, newOrder]);
-    setShowLoadOrderModal(false);
-    alert('✅ Orden cargada exitosamente. Ahora puedes confirmarla y actualizar el stock.');
-  };
-
-  // Confirmar y guardar en Supabase
-  const confirmOrderAndUpdateStock = async (orderId: string) => {
-    const order = orders.find(o => o.id === orderId);
-    if (!order) return;
-
-    const { data: orderInserted, error: orderError } = await supabase
-      .from('orders')
-      .insert([
-        {
-          order_code: order.id,
-          client_name: order.clientName,
-          client_rut: order.clientRUT,
-          status: 'completed',
-          subtotal: order.subtotal,
-          date: order.date,
-          notes: order.notes
-        }
-      ])
-      .select()
-      .single();
-
-    if (orderError) {
-      console.error(orderError);
-      alert('❌ Error al guardar la orden');
-      return;
+    if (term) {
+      rows = rows.filter((r) => {
+        const hay = [
+          String(r.id ?? ""),
+          String(r.name ?? ""),
+          String(r.sku ?? ""),
+          String(r.status ?? ""),
+          String(r.type ?? ""),
+        ]
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(term);
+      });
     }
 
-    const itemsPayload = order.items.map(item => ({
-      order_id: orderInserted.id,
-      product_id: item.productId,
-      product_name: item.productName,
-      sku: item.sku,
-      description: item.description,
-      quantity: item.quantity,
-      unit_price: item.unitPrice,
-      total: item.total
-    }));
+    rows.sort((a, b) => {
+      const va = (a as any)[sortKey];
+      const vb = (b as any)[sortKey];
 
-    const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
-    if (itemsError) {
-      console.error(itemsError);
-      alert('❌ Error al guardar los ítems de la orden');
-      return;
-    }
-
-    // Actualizar stock local
-    const updatedStock = [...productStock];
-    let lowStockWarnings: string[] = [];
-
-    order.items.forEach(item => {
-      const idx = updatedStock.findIndex(p => p.id === item.productId);
-      if (idx !== -1) {
-        const newStock = updatedStock[idx].stockMadre - item.quantity;
-        updatedStock[idx] = {
-          ...updatedStock[idx],
-          stockMadre: Math.max(0, newStock)
-        };
-        if (newStock < 20) {
-          lowStockWarnings.push(`${item.productName} (${item.sku}): ${newStock} unidades restantes`);
-        }
+      if (typeof va === "number" && typeof vb === "number") {
+        return sortDir === "asc" ? va - vb : vb - va;
       }
+      const sa = String(va ?? "");
+      const sb = String(vb ?? "");
+      return sortDir === "asc" ? sa.localeCompare(sb) : sb.localeCompare(sa);
     });
 
-    setProductStock(updatedStock);
-    setOrders(orders.map(o => (o.id === orderId ? { ...o, status: 'completed' } : o)));
+    return rows;
+  }, [b2bProducts, q, sortKey, sortDir]);
 
-    let msg = `✅ Orden ${order.id} confirmada y guardada en Supabase.\n\nStock descontado:\n`;
-    order.items.forEach(i => (msg += `- ${i.quantity} x ${i.productName}\n`));
-    if (lowStockWarnings.length > 0) msg += `\n⚠️ ALERTAS DE STOCK BAJO:\n${lowStockWarnings.join('\n')}`;
-    alert(msg);
-  };
+  // ===== Carga catálogo desde B2B Woo =====
+  const loadB2bProducts = useCallback(async () => {
+    try {
+      setB2bLoading(true);
+      setB2bError(null);
+      const res = await b2bSyncDown(); // Llama a la función de b2b.ts
+      setB2bProducts(res.products ?? []);
+      setLastSync(new Date());
+    } catch (e: any) {
+      setB2bError(e?.message ?? String(e));
+      setB2bProducts([]);
+    } finally {
+      setB2bLoading(false);
+    }
+  }, []);
 
-  const exportOrder = (order: B2BOrder) => {
-    const csvContent = [
-      ['ORDEN DE COMPRA B2B - OldTree'],
-      ['ID Orden', order.id],
-      ['Cliente', order.clientName],
-      ['RUT', order.clientRUT],
-      ['Fecha', order.date],
-      ['Estado', getStatusConfig(order.status).label],
-      [''],
-      ['SKU', 'Producto', 'Descripción', 'Cantidad', 'Precio Unit.', 'Total'],
-      ...order.items.map(item => [
-        item.sku,
-        item.productName,
-        item.description,
-        item.quantity,
-        item.unitPrice,
-        item.total
-      ]),
-      [''],
-      ['SUBTOTAL', '', '', '', '', order.subtotal],
-      [''],
-      ['Notas:', order.notes || 'Sin notas']
-    ]
-      .map(row => row.join(','))
-      .join('\n');
+  useEffect(() => {
+    // Carga inicial
+    loadB2bProducts();
+  }, [loadB2bProducts]);
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `OC_${order.id}_${order.date}.csv`;
-    link.click();
-  };
-
+  // ===== Render =====
   return (
-  <div className="space-y-6 bg-transparent text-neutral-900 min-h-screen p-4">
-    {/* Header */}
-    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-      <div className="flex items-center space-x-3">
-        <div className="p-3 bg-purple-200/70 text-purple-700 rounded-lg">
-          <FileText size={24} />
-        </div>
+    <div className="mx-auto max-w-7xl p-4 md:p-6">
+      <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-neutral-900">
-            Canal B2B - Órdenes de Compra
-          </h2>
-          <p className="text-sm text-neutral-600">
-            Gestión de ventas mayoristas a otras empresas
+          <h1 className="text-2xl font-semibold">Catálogo B2B</h1>
+          <p className="text-sm text-neutral-500">
+            Productos sincronizados desde el WooCommerce B2B.
           </p>
         </div>
-      </div>
 
-      <div className="flex items-center space-x-3">
-        <button
-          onClick={generateBlankOrder}
-          className="flex items-center space-x-2 px-4 py-2 bg-neutral-900 text-white rounded-lg hover:bg-neutral-800 transition-colors"
-        >
-          <Plus size={18} />
-          <span>Generar OC en Blanco</span>
-        </button>
-        <button
-          onClick={() => setShowLoadOrderModal(true)}
-          className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-        >
-          <Upload size={18} />
-          <span>Cargar OC del Cliente</span>
-        </button>
-      </div>
-    </div>
-
-    {/* Info box */}
-    <div className="bg-purple-100/60 border border-purple-200 rounded-lg p-4">
-      <h3 className="font-semibold text-purple-900 mb-2">
-        ℹ️ ¿Cómo funciona el Canal B2B?
-      </h3>
-      <ol className="text-sm text-purple-950/80 space-y-1 ml-4 list-decimal">
-        <li>Generas una orden en blanco con todos los productos disponibles</li>
-        <li>El cliente completa las cantidades que desea adquirir</li>
-        <li>Cargas la orden completada en el sistema</li>
-        <li>Confirmas la orden y el stock se descuenta automáticamente del Stock Madre</li>
-      </ol>
-    </div>
-
-    {/* Métricas */}
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-      <div className="bg-purple-100/70 border border-purple-200/60 rounded-xl p-6">
-        <h3 className="text-sm font-semibold text-purple-900 uppercase tracking-wide mb-2">
-          Total Órdenes
-        </h3>
-        <p className="text-3xl font-bold text-neutral-900">{orders.length}</p>
-      </div>
-      <div className="bg-purple-100/70 border border-purple-200/60 rounded-xl p-6">
-        <h3 className="text-sm font-semibold text-purple-900 uppercase tracking-wide mb-2">
-          Pendientes
-        </h3>
-        <p className="text-3xl font-bold text-amber-600">
-          {orders.filter((o) => o.status === "pending").length}
-        </p>
-      </div>
-      <div className="bg-purple-100/70 border border-purple-200/60 rounded-xl p-6">
-        <h3 className="text-sm font-semibold text-purple-900 uppercase tracking-wide mb-2">
-          Confirmadas
-        </h3>
-        <p className="text-3xl font-bold text-purple-700">
-          {orders.filter((o) => o.status === "confirmed").length}
-        </p>
-      </div>
-      <div className="bg-purple-100/70 border border-purple-200/60 rounded-xl p-6">
-        <h3 className="text-sm font-semibold text-purple-900 uppercase tracking-wide mb-2">
-          Monto Total
-        </h3>
-        <p className="text-2xl font-bold text-emerald-600">
-          {formatPrice(orders.reduce((sum, o) => sum + o.subtotal, 0))}
-        </p>
-      </div>
-    </div>
-
-    {/* Órdenes */}
-    <div className="space-y-4">
-      {orders.map((order) => {
-        const statusConfig = getStatusConfig(order.status)
-        return (
-          <div
-            key={order.id}
-            className="bg-purple-100/70 border border-purple-200/60 rounded-xl shadow-sm overflow-hidden"
+        <div className="flex items-center gap-2">
+          <button
+            onClick={loadB2bProducts}
+            className="rounded-xl border px-3 py-1.5 hover:bg-neutral-50 disabled:opacity-60"
+            disabled={b2bLoading}
           >
-            <div className="bg-purple-50 border-b border-purple-200/60 p-6">
-              <div className="flex items-start justify-between">
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-3">
-                    <code className="text-lg font-bold bg-neutral-900 text-white px-3 py-1 rounded">
-                      {order.id}
-                    </code>
-                    <span
-                      className={`${statusConfig.bg} ${statusConfig.color} px-3 py-1 rounded-full text-sm font-semibold flex items-center space-x-1`}
-                    >
-                      {statusConfig.icon}
-                      <span>{statusConfig.label}</span>
-                    </span>
-                  </div>
-                  <div className="text-neutral-800">
-                    <p className="font-semibold text-lg">{order.clientName}</p>
-                    <p className="text-sm">RUT: {order.clientRUT}</p>
-                    <p className="text-sm">Fecha: {formatDate(order.date)}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm text-neutral-600 mb-1">Subtotal</p>
-                  <p className="text-2xl font-bold text-emerald-700">
-                    {formatPrice(order.subtotal)}
-                  </p>
-                </div>
-              </div>
+            {b2bLoading ? "Actualizando…" : "Actualizar"}
+          </button>
+        </div>
+      </header>
+
+      {/* Estado/sistema */}
+      <section className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="rounded-2xl border p-4">
+          <h3 className="text-sm font-medium text-neutral-700">Estado Conexión B2B</h3>
+          <div className="mt-2 text-sm">
+            <div className="flex items-center gap-2">
+              <span
+                className={`inline-block h-2 w-2 rounded-full ${
+                  b2bLoading ? "bg-yellow-500" : b2bError ? "bg-red-600" : "bg-emerald-600"
+                }`}
+              />
+              <span>
+                {b2bLoading ? "Sincronizando…" : b2bError ? "Desconectado" : "Conectado"}
+              </span>
             </div>
-
-            <div className="p-6">
-              <h4 className="font-semibold text-purple-900 mb-4">
-                Productos en la orden:
-              </h4>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-purple-200 text-purple-900/80">
-                      <th className="text-left py-2 px-3 text-sm font-semibold">SKU</th>
-                      <th className="text-left py-2 px-3 text-sm font-semibold">Producto</th>
-                      <th className="text-left py-2 px-3 text-sm font-semibold">Descripción</th>
-                      <th className="text-center py-2 px-3 text-sm font-semibold">Cantidad</th>
-                      <th className="text-center py-2 px-3 text-sm font-semibold">Precio Unit.</th>
-                      <th className="text-center py-2 px-3 text-sm font-semibold">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {order.items.map((item, index) => (
-                      <tr key={index} className="border-b border-purple-200/50">
-                        <td className="py-3 px-3">
-                          <code className="text-xs bg-purple-200/50 text-purple-900 px-2 py-1 rounded">
-                            {item.sku}
-                          </code>
-                        </td>
-                        <td className="py-3 px-3 font-semibold text-neutral-900">
-                          {item.productName}
-                        </td>
-                        <td className="py-3 px-3 text-sm text-neutral-700">
-                          {item.description}
-                        </td>
-                        <td className="py-3 px-3 text-center font-bold text-neutral-900">
-                          {item.quantity}
-                        </td>
-                        <td className="py-3 px-3 text-center text-neutral-700">
-                          {formatPrice(item.unitPrice)}
-                        </td>
-                        <td className="py-3 px-3 text-center font-bold text-emerald-600">
-                          {formatPrice(item.total)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="flex items-center justify-end space-x-3 mt-6">
-                <button
-                  onClick={() => exportOrder(order)}
-                  className="flex items-center space-x-2 px-4 py-2 bg-purple-200/70 text-purple-900 rounded-lg hover:bg-purple-300/60 transition-colors"
-                >
-                  <Download size={16} />
-                  <span>Exportar</span>
-                </button>
-                {(order.status === "pending" || order.status === "confirmed") && (
-                  <button
-                    onClick={() => confirmOrderAndUpdateStock(order.id)}
-                    className="flex items-center space-x-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors"
-                  >
-                    <CheckCircle size={16} />
-                    <span>Confirmar y Actualizar Stock</span>
-                  </button>
-                )}
-              </div>
+            <div className="mt-1 text-neutral-500">
+              {lastSync ? (
+                <span>
+                  Última sync:{" "}
+                  {lastSync.toLocaleString(undefined, {
+                    hour12: false,
+                    year: "numeric",
+                    month: "2-digit",
+                    day: "2-digit",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              ) : (
+                <span>Aún sin sincronizar</span>
+              )}
             </div>
-          </div>
-        )
-      })}
-    </div>
-
-    {/* Modal */}
-    {showLoadOrderModal && (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4 border border-purple-200">
-          <h3 className="text-xl font-bold text-neutral-900 mb-4">
-            Cargar Orden del Cliente
-          </h3>
-          <p className="text-neutral-600 mb-6">
-            Aquí podrás cargar un archivo Excel/CSV con las cantidades completadas por el cliente.
-          </p>
-          <div className="flex items-center justify-end space-x-3">
-            <button
-              onClick={() => setShowLoadOrderModal(false)}
-              className="px-4 py-2 text-neutral-700 hover:bg-neutral-100 rounded-lg transition-colors"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={simulateLoadOrder}
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-            >
-              Simular Carga
-            </button>
+            {b2bError && (
+              <p className="mt-2 break-all text-xs text-red-600">{b2bError}</p>
+            )}
           </div>
         </div>
-      </div>
-    )}
-  </div>
-)
 
+        <div className="rounded-2xl border p-4 md:col-span-2">
+          <h3 className="text-sm font-medium text-neutral-700">Búsqueda y orden</h3>
+          <div className="mt-2 flex flex-col gap-2 md:flex-row md:items-center">
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar por ID, nombre, SKU, estado…"
+              className="w-full rounded-xl border px-3 py-2 outline-none focus:ring"
+            />
+            <div className="flex items-center gap-2">
+              <select
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as SortKey)}
+                className="rounded-xl border px-3 py-2"
+              >
+                <option value="id">ID</option>
+                <option value="name">Nombre</option>
+                <option value="sku">SKU</option>
+                <option value="price">Precio</option>
+                <option value="stock_quantity">Stock</option>
+                <option value="status">Status</option>
+                <option value="type">Tipo</option>
+              </select>
+              <button
+                onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                className="rounded-xl border px-3 py-2 hover:bg-neutral-50"
+                title="Cambiar orden"
+              >
+                {sortDir === "asc" ? "Asc" : "Desc"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
 
+      {/* Lista de productos B2B */}
+      <section className="mt-6 rounded-2xl border p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Productos B2B</h2>
+          <div className="text-sm text-neutral-500">
+            {b2bProducts.length} item{b2bProducts.length !== 1 ? "s" : ""}
+          </div>
+        </div>
 
-};
+        {!b2bLoading && !b2bError && b2bProducts.length === 0 && (
+          <p className="mt-3 text-sm text-neutral-500">
+            No hay productos en el B2B o no se pudieron cargar.
+          </p>
+        )}
+
+        <div className="mt-3 max-h-[60vh] overflow-auto rounded-xl border">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-white">
+              <tr className="text-left">
+                <th className="border-b py-2 px-3">ID</th>
+                <th className="border-b py-2 px-3">Nombre</th>
+                <th className="border-b py-2 px-3">SKU</th>
+                <th className="border-b py-2 px-3">Precio</th>
+                <th className="border-b py-2 px-3">Stock</th>
+                <th className="border-b py-2 px-3">Status</th>
+                <th className="border-b py-2 px-3">Tipo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((p) => (
+                <tr key={p.id} className="border-b hover:bg-neutral-50">
+                  <td className="py-2 px-3">{p.id}</td>
+                  <td className="py-2 px-3">{p.name}</td>
+                  <td className="py-2 px-3">{p.sku || "-"}</td>
+                  <td className="py-2 px-3">
+                    {p.price != null ? `$${Number(p.price).toFixed(2)}` : "-"}
+                  </td>
+                  <td className="py-2 px-3">
+                    {p.manage_stock ? (p.stock_quantity ?? 0) : "—"}
+                  </td>
+                  <td className="py-2 px-3">{p.status || "-"}</td>
+                  <td className="py-2 px-3">{p.type || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {b2bLoading && (
+          <p className="mt-3 text-sm text-neutral-500">Cargando productos B2B…</p>
+        )}
+      </section>
+    </div>
+  );
+}

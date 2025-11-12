@@ -4,11 +4,11 @@ import { Layout, TabType } from "./components/Layout";
 import { Dashboard } from "./components/Dashboard";
 import { StockManager } from "./components/StockManager";
 import { ChannelView } from "./components/ChannelView";
-import { PurchaseOrders } from "./components/PurchaseOrders";
 import { Alerts } from "./components/Alerts";
 import { Admin } from "./components/Admin";
 import Login from "./components/Login";
 import Web from "./components/Web";
+import PurchaseOrders from "./components/PurchaseOrders";
 
 type AppUser = {
   id: string;
