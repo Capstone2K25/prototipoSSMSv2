@@ -19,6 +19,12 @@ import {
   wooPushStockLocal,
   wooUpdateProductLocal,
 } from "../data/woo";
+// B2B UPDATE
+import {
+  b2bCreateProductLocal,
+  b2bDeleteProductLocal,
+  b2bUpdateProductLocal,
+} from "../data/b2b";
 
 type LookupCat = { id: number; name: string };
 type LookupTal = {
@@ -126,9 +132,11 @@ const FamCard = ({
                   const skus = items.map((p) => String(p.sku));
 
                   // Eliminamos en Woo (best-effort)
-                  await Promise.allSettled(
-                    skus.map((s) => wooDeleteProductLocal(s))
-                  );
+                  // B2B UPDATE
+                  await Promise.allSettled([
+                    ...skus.map((s) => wooDeleteProductLocal(s)),
+                    ...skus.map((s) => b2bDeleteProductLocal(s)), 
+                  ]);
 
                   // Eliminamos en BD
                   const { error } = await supabase
@@ -428,9 +436,11 @@ export const StockManager = () => {
     const selectedProducts = products.filter((p) => selectedIds.includes(p.id));
     const skus = selectedProducts.map((p) => String(p.sku));
 
-    const results = await Promise.allSettled(
-      skus.map((sku) => wooDeleteProductLocal(sku))
-    );
+    // B2B UPDATE
+    const results = await Promise.allSettled([
+      ...skus.map((sku) => wooDeleteProductLocal(sku)),
+      ...skus.map((sku) => b2bDeleteProductLocal(sku)), // <-- AÑADIDO
+    ]);
     const okWoo = results.filter((r) => r.status === "fulfilled").length;
     const failWoo = results.length - okWoo;
 
@@ -645,33 +655,51 @@ export const StockManager = () => {
         }
 
         // Woo best-effort
+        // B2B UPDATE:
         try {
-          // ✅ Para updates: sincroniza precio + stock web en Woo usando update-product-local
-          await Promise.allSettled(
-            updates.map((u) => {
+          // ✅ Para updates: sincroniza precio + stock en AMBOS canales
+          await Promise.allSettled([
+            ...updates.map((u) => {
               const p = products.find((pp) => pp.id === u.id);
               if (!p?.sku) return Promise.resolve();
+              // Sincroniza WEB
               return wooUpdateProductLocal({
                 skuLocal: String(p.sku),
                 price: Number(u.price),
                 absoluteStockWeb: Number(u.stockweb),
               });
-            })
-          );
+            }),
+            ...updates.map((u) => {
+              const p = products.find((pp) => pp.id === u.id);
+              if (!p?.sku) return Promise.resolve();
+              // Sincroniza B2B
+              return b2bUpdateProductLocal({
+                skuLocal: String(p.sku),
+                price: Number(u.price),
+                absoluteStockB2b: Number(u.stockb2b),
+              });
+            }),
+          ]);
 
-          // Para los nuevos: crea en Woo y setea stock web inicial
-          await Promise.allSettled(
-            createdRows.map((row) =>
+          // Para los nuevos: crea en AMBOS canales y setea stock inicial
+          await Promise.allSettled([
+            ...createdRows.map((row) =>
               wooCreateProductLocal({
                 skuLocal: row.sku,
                 name: row.name,
                 price: Number(row.price),
                 initialStockWeb: Number(row.stockweb || 0),
-              }).then(() =>
-                wooPushStockLocal(String(row.sku), Number(row.stockweb || 0))
-              )
-            )
-          );
+              })
+            ),
+            ...createdRows.map((row) =>
+              b2bCreateProductLocal({
+                skuLocal: row.sku,
+                name: row.name,
+                price: Number(row.price),
+                initialStockB2b: Number(row.stockb2b || 0),
+              })
+            ),
+          ]);
         } catch {
           /* ignoramos errores de Woo */
         }
@@ -724,19 +752,27 @@ export const StockManager = () => {
         }
 
         // Woo best-effort
+        // B2B UPDATE
+        // Woo best-effort
         try {
-          await Promise.allSettled(
-            data.map((row: any) =>
+          await Promise.allSettled([
+            ...data.map((row: any) =>
               wooCreateProductLocal({
                 skuLocal: row.sku,
                 name: row.name,
                 price: Number(row.price || 0),
                 initialStockWeb: Number(row.stockweb || 0),
-              }).then(() =>
-                wooPushStockLocal(String(row.sku), Number(row.stockweb || 0))
-              )
-            )
-          );
+              })
+            ),
+            ...data.map((row: any) =>
+              b2bCreateProductLocal({
+                skuLocal: row.sku,
+                name: row.name,
+                price: Number(row.price || 0),
+                initialStockB2b: Number(row.stockb2b || 0),
+              })
+            ),
+          ]);
         } catch {
           /* ignore */
         }
