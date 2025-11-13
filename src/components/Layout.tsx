@@ -175,7 +175,7 @@ export const Layout = ({ children, onLogout }: LayoutProps) => {
   </div>
 
   {/* MENÚ DESKTOP */}
-  <div className="hidden lg:flex flex-1 items-center justify-end">
+  <div className="hidden lg:flex flex-1 items-center justify-end ml-4">
     <div className="flex items-center space-x-1">
       {tabs.map((tab) => {
         const isActive = activeTab === tab.id;
