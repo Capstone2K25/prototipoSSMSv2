@@ -224,6 +224,10 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   const [draftError, setDraftError] = useState<string | null>(null);
   const [draftSending, setDraftSending] = useState(false);
 
+  // Publicación de familia
+  const [showFamilyPreview, setShowFamilyPreview] = useState(false);
+  const [draftFamily, setDraftFamily] = useState<any>(null);
+
   // Estados de talla / size grid (requeridos por ML Moda)
   const [sizeGridId, setSizeGridId] = useState<string>("");
   const [sizeGridRowId, setSizeGridRowId] = useState<string>("");
@@ -239,17 +243,6 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   ];
 
   // categorías de indumentaria donde exigimos GENDER
-  const categoryRequiresGender = (catId: string) =>
-    [
-      "MLC158583", // Jeans
-      "MLC417372", // Shorts
-      "MLC158467", // Poleras / Manga larga
-      "MLC158382", // Polerones
-      "MLC158340", // Chaquetas
-    ].includes(catId);
-
-  const categoryRequiresMainMaterial = (catId: string) => catId === "MLC158583"; // Jeans
-  const categoryRequiresPantType = (catId: string) => catId === "MLC158583"; // Jeans
 
   // Cat. ML buscador
   const [catQuery, setCatQuery] = useState("");
@@ -288,21 +281,6 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     8: "MLC158340", // Chaquetas (alfanumérica)
     9: "MLC158467", // Poleras manga larga (alfanumérica)
   };
-
-  // Tipos de pantalón permitidos (PANT_TYPE)
-  const PANT_TYPE_OPTIONS = [
-    { key: "jeans", label: "Jeans" },
-    { key: "de_vestir", label: "De vestir" },
-    { key: "palazzo", label: "Palazzo" },
-    { key: "oxford", label: "Oxford" },
-    { key: "cargo", label: "Cargo" },
-    { key: "babucha", label: "Babucha" },
-    { key: "legging", label: "Legging" },
-    { key: "deportivo", label: "Deportivo" },
-    { key: "desmontable", label: "Desmontable" },
-    { key: "embarazada", label: "Embarazada" },
-    { key: "buzo", label: "Buzo" },
-  ];
 
   const getMeliCategory = (id: number | null | undefined) =>
     typeof id === "number" && meliCategoryMap[id]
@@ -703,7 +681,6 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     // Forzamos la guía por categoría si aplica
     const forcedGuide = CATEGORY_GUIDE_MAP[safeDraft.category_id] || "";
     const gridIdToUse = forcedGuide || String(sizeGridId || "");
-    let rowIdToUse = String(sizeGridRowId || "");
 
     // … construir atributos
     const base = (safeDraft.attributes || []).filter(
@@ -799,13 +776,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
       });
     }
 
-    // GENDER (si aplica)
-    if (requiresGender(safeDraft.category_id)) {
-      const gVN =
-        GENDER_OPTIONS.find((o) => o.key === gender)?.value_name ||
-        "Sin género";
-      finalAttrs.push({ id: "GENDER", value_name: gVN });
-    }
+    // 
 
     // COLOR (si aplica)
     if (requiresColor(safeDraft.category_id)) {
@@ -863,6 +834,179 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
       setDraftSending(false);
     }
   }
+  // ===== Publicar toda la familia (variaciones) =====
+  // ===== Publicar toda la familia (variaciones) =====
+async function publishFamily(fam: FamRow | any) {
+  if (!connected) {
+    alert("Mercado Libre desconectado");
+    return;
+  }
+
+  try {
+    setRowBusy(fam.name || fam.title || "publicación");
+
+    const catId = fam.category_id || getMeliCategory(fam.categoria_id ?? null);
+
+    // 1) Forzar guía por categoría si existe
+    const forcedGuide = CATEGORY_GUIDE_MAP[catId] || "";
+    const requiresGrid = Boolean(forcedGuide);
+
+    const variations: any[] = [];
+
+    // 2) Variaciones por talla (usar talla real, NO sku)
+    for (const p of Object.values(fam.byTalla || {})) {
+      // obtener la talla (LookupTal) del producto
+      const t = tallasById.get(p.talla_id || -1);
+      const tipo: "alfanumerica" | "numerica" = (t?.tipo || "alfanumerica") as any;
+
+      // etiqueta normalizada igual que en tu lógica de "single post"
+      const etiqueta_norm =
+        tipo === "numerica"
+          ? String(t?.orden ?? t?.etiqueta ?? "").trim()
+          : String(t?.etiqueta || "").toUpperCase().replace(/\s+/g, "");
+
+      // buscar mapeo en meli_size_map (filtrando por categoría, tipo y etiqueta_norm)
+      const { data: map, error: mapErr } = await supabase
+        .from("meli_size_map")
+        .select("size_grid_id,size_grid_row_id,size_value")
+        .eq("categoria_ml_id", catId)
+        .eq("talla_tipo", tipo)
+        .eq("etiqueta_norm", etiqueta_norm)
+        .maybeSingle();
+
+      if (requiresGrid) {
+        // obligatoria la fila de guía
+        if (!map?.size_grid_id || !map?.size_grid_row_id || !map?.size_value) {
+          console.error("No hay fila de guía para", { catId, tipo, etiqueta_norm, mapErr });
+          continue; // saltar esta variación sin grid válido
+        }
+        // asegurar que coincida la guía forzada
+        if (String(map.size_grid_id) !== String(forcedGuide)) {
+          console.warn("Fila no corresponde a guía forzada", {
+            forcedGuide, got: map.size_grid_id, row: map.size_grid_row_id
+          });
+          continue;
+        }
+      }
+
+      const attrs: any[] = [];
+// === GENDER (válido para Mercado Libre Chile)
+
+      // === FASHION GRID (cuando aplica) ===
+      if (requiresGrid) {
+        attrs.push(
+          {
+            id: "SIZE",
+            value_name: map.size_value,              // "M" o "42"
+            value_id: map.size_grid_row_id,          // "3947xxx:5"
+          },
+          {
+            id: "SIZE_GRID_ID",
+            value_name: String(map.size_grid_id),    // "3947xxx"
+            value_id: String(map.size_grid_id),      // "3947xxx"
+          },
+          {
+            id: "SIZE_GRID_ROW_ID",
+            value_name: map.size_grid_row_id,        // "3947xxx:5"
+            value_id: map.size_grid_row_id,          // "3947xxx:5"
+          },
+        );
+      }
+
+      // === Atributos comunes requeridos por estas categorías ===
+      // AGE_GROUP (adulto) sólo si aplica a la categoría de indumentaria
+
+
+// === GENDER (solo si la categoría lo admite)
+const CATEGORIES_WITH_GENDER = new Set([
+  "MLC158467", // Poleras
+  "MLC158382", // Polerones
+  "MLC158340", // Chaquetas
+]);
+if (CATEGORIES_WITH_GENDER.has(catId)) {
+  const GENDER_MAP: Record<string, { value_id: string; value_name: string }> = {
+    male: { value_id: "110461", value_name: "Hombre" },
+    female: { value_id: "110462", value_name: "Mujer" },
+    unisex: { value_id: "110463", value_name: "Unisex" },
+  };
+  const g = GENDER_MAP[fam.gender || "unisex"];
+  attrs.push({
+    id: "GENDER",
+    value_id: g.value_id,
+    value_name: g.value_name,
+  });
+}
+
+
+      // COLOR si el usuario lo definió en el modal
+      if (fam.color) attrs.push({ id: "COLOR", value_name: fam.color });
+
+      // GARMENT_TYPE o PANT_TYPE según categoría
+      const GARMENT_TYPE_MAP: Record<string, string> = {
+        MLC158467: "Remera",
+        MLC158382: "Polerón",
+        MLC158340: "Chaqueta",
+      };
+      const PANT_TYPE_MAP: Record<string, string> = {
+        MLC158583: "Jeans",
+        MLC417372: "Shorts",
+      };
+      if (GARMENT_TYPE_MAP[catId]) {
+        attrs.push({ id: "GARMENT_TYPE", value_name: GARMENT_TYPE_MAP[catId] });
+      }
+      if (PANT_TYPE_MAP[catId]) {
+        attrs.push({ id: "PANT_TYPE", value_name: PANT_TYPE_MAP[catId] });
+        // si quieres también MAIN_MATERIAL por consistencia con “single post”, agrégalo aquí
+        // attrs.push({ id: "MAIN_MATERIAL", value_name: fam.mainMaterial || "Algodón" });
+      }
+
+      // === Variación final ===
+      variations.push({
+        attribute_combinations: attrs.filter((a) => a.id === "SIZE"),
+        attributes: attrs,
+        available_quantity: Number(p.stockml) || 0,
+        price: Number(p.price) || 0,
+        seller_custom_field: p.sku,
+      });
+    }
+
+    if (variations.length === 0) {
+      alert("No hay tallas con grid válido o con stock para publicar.");
+      return;
+    }
+
+    // 3) Validación: al menos 1 imagen (recomendado por ML)
+    const pictures = Array.isArray(fam.pictures) ? fam.pictures.filter(Boolean) : [];
+    if (pictures.length === 0) {
+      console.warn("Publicando sin imágenes; ML puede rechazar/penalizar.");
+    }
+
+    // === Llamada al endpoint ===
+    const { data, error } = await supabase.functions.invoke("meli-post-family", {
+      body: {
+        title: fam.title || fam.name,
+        category_id: catId,
+        variations,
+        pictures, // <-- ahora sí
+      },
+    });
+
+    if (error || !(data as any)?.ok) {
+      alert("Error al publicar familia.");
+      console.error(error || data);
+      return;
+    }
+
+    alert("Familia publicada correctamente 🎉");
+    await handleSyncAll();
+  } catch (e) {
+    console.error("publishFamily error:", e);
+    alert("Error publicando familia.");
+  } finally {
+    setRowBusy(null);
+  }
+}
+
 
   // Subir imagen a Storage (pública)
   async function uploadFileToStorage(file: File): Promise<string> {
@@ -911,590 +1055,458 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
     );
 
   return (
-  <div className="space-y-6 transition-colors duration-300">
-    {/* Header */}
-    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-      <div className="flex items-center space-x-3">
-        <div className="p-3 bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300 rounded-lg">
-          {config.icon}
-        </div>
-        <div>
-          <h2 className="text-2xl font-bold text-neutral-900 dark:text-white">
-            {config.title}
-          </h2>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            {config.description}
-          </p>
-        </div>
-      </div>
-
-      <button
-        onClick={handleSyncAll}
-        disabled={syncing}
-        className="flex items-center space-x-2 px-4 py-2 bg-green-700 hover:bg-green-800 text-white rounded-lg disabled:opacity-50 transition-all"
-      >
-        <RefreshCw size={18} className={syncing ? "animate-spin" : ""} />
-        <span>{syncing ? "Sincronizando…" : "Sincronizar ahora"}</span>
-      </button>
-    </div>
-
-    {/* Métricas */}
-<div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-  {/* Estado */}
-  <div className="bg-white dark:bg-[#1a1a1a] rounded-xl shadow-sm border border-amber-100 dark:border-amber-800 p-6 transition-colors">
-    <div className="flex items-center justify-between mb-2">
-      <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400 uppercase">
-        Estado
-      </h3>
-      {connected ? (
-        <CheckCircle className="text-green-600 dark:text-green-400" size={20} />
-      ) : (
-        <AlertCircle className="text-red-600 dark:text-red-400" size={20} />
-      )}
-    </div>
-
-    {connected ? (
-      <>
-        <p className="text-2xl font-bold text-green-600 dark:text-green-400">Conectado</p>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-          {health?.nickname ? `@${health.nickname} · ` : ""}
-          {typeof expiresInMin === "number"
-            ? `expira en ${expiresInMin} min`
-            : ""}
-        </p>
-      </>
-    ) : (
-      <>
-        <p className="text-2xl font-bold text-red-600 dark:text-red-400">Desconectado</p>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-          Conecta tu cuenta para continuar.
-        </p>
-      </>
-    )}
-  </div>
-
-  {/* Productos con stock ML */}
-  <div className="bg-white dark:bg-[#1a1a1a] rounded-xl shadow-sm border border-amber-100 dark:border-amber-800 p-6 transition-colors">
-    <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400 uppercase mb-2">
-      Productos con stock ML
-    </h3>
-    <p className="text-2xl font-bold text-neutral-900 dark:text-white">{fams.length}</p>
-    <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">
-      agrupadas por nombre + categoría
-    </p>
-  </div>
-
-  {/* Stock ML Total */}
-  <div className="bg-white dark:bg-[#1a1a1a] rounded-xl shadow-sm border border-amber-100 dark:border-amber-800 p-6 transition-colors">
-    <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400 uppercase mb-2">
-      Stock ML Total
-    </h3>
-    <p className="text-2xl font-bold text-neutral-900 dark:text-white">{totalStockML}</p>
-    <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">unidades</p>
-  </div>
-</div>
-
-
-      {/* Tarjetas de productos con detalle de tallas */}
-<div className="bg-white dark:bg-neutral-900 rounded-xl p-6 border border-neutral-200 dark:border-neutral-700 transition-colors">
-  <div className="flex items-center justify-between mb-6">
-    <h3 className="text-lg font-bold text-neutral-900 dark:text-white">
-      Productos en {config.title}
-    </h3>
-    <span className="text-sm text-neutral-600 dark:text-neutral-400">
-      Última sync: {formatDate(lastSync)}
-    </span>
-  </div>
-
-  {fams.length === 0 ? (
-    <div className="text-center py-12 text-neutral-500 dark:text-neutral-400">
-      No hay productos para mostrar.
-    </div>
-  ) : (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-      {fams.map((fam, idx) => {
-        const cols = columnsForFam(fam);
-        const totalFam = cols.reduce(
-          (acc, t) => acc + (fam.byTalla[t.id]?.stockml || 0),
-          0
-        );
-
-        const firstSkuProduct = Object.values(fam.byTalla)[0];
-        const hasAnyPublished =
-          firstSkuProduct &&
-          Object.values(fam.byTalla).some((p) => isSkuPublished(p.sku));
-
-        const famKey = `${fam.name}::${fam.categoria_id ?? 0}::${fam.tipo}`;
-        const isOpen = !!expandedFam[famKey];
-
-        const toggle = () =>
-          setExpandedFam((prev) => ({
-            ...prev,
-            [famKey]: !prev[famKey],
-          }));
-
-        const sampleImg =
-          "https://http2.mlstatic.com/D_NQ_NP_2X_954300-MLC54978809383_042023-F.webp";
-
-        return (
-          <div
-            key={famKey + idx}
-            className="bg-amber-50 dark:bg-neutral-800 border border-amber-100 dark:border-amber-800 rounded-2xl shadow-sm hover:shadow-md overflow-hidden transition flex flex-col"
-          >
-            {/* Imagen */}
-            <div className="aspect-[4/3] bg-white dark:bg-neutral-900 flex items-center justify-center">
-              <img
-                src={sampleImg}
-                alt={fam.name}
-                className="object-contain h-full w-full"
-              />
-            </div>
-
-            {/* Header tarjeta */}
-            <div className="p-4 flex flex-col gap-2">
-          <div className="flex justify-between items-start">
-            <div>
-              <h4 className="font-semibold text-neutral-900 dark:text-white line-clamp-2">
-                {fam.name}
-              </h4>
-              <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                {fam.categoria_nombre || "Sin categoría"}
-              </p>
-            </div>
-            <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
-              {new Intl.NumberFormat("es-CL", {
-                style: "currency",
-                currency: "CLP",
-              }).format(Object.values(fam.byTalla)[0]?.price || 0)}
+    <div className="space-y-6 transition-colors duration-300">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-center space-x-3">
+          <div className="p-3 bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300 rounded-lg">
+            {config.icon}
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-neutral-900 dark:text-white">
+              {config.title}
+            </h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              {config.description}
             </p>
           </div>
+        </div>
 
-              {/* Métricas rápidas */}
-              <div className="flex items-center justify-between text-xs mt-1">
-                <div className="flex flex-col">
-                  <span className="text-neutral-500 dark:text-neutral-400">
-                    Stock ML total
-                  </span>
-                  <span
-                    className={`text-sm font-bold ${
-                      totalFam === 0
-                        ? "text-red-600 dark:text-red-400"
-                        : totalFam < 5
-                        ? "text-orange-500 dark:text-orange-400"
-                        : "text-green-700 dark:text-green-400"
-                    }`}
-                  >
-                    {totalFam} unid.
-                  </span>
-                </div>
-
-                {firstSkuProduct && (
-                  <div className="text-right">
-                    <span className="text-neutral-500 dark:text-neutral-400 block">
-                      Desde
-                    </span>
-                    <span className="text-sm font-semibold text-neutral-900 dark:text-white">
-                      {new Intl.NumberFormat("es-CL", {
-                        style: "currency",
-                        currency: "CLP",
-                      }).format(firstSkuProduct.price || 0)}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Botón para ver tallas / acciones */}
-              <button
-                onClick={toggle}
-                className="mt-3 w-full flex items-center justify-between px-3 py-2 rounded-lg bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800 text-amber-800 dark:text-amber-300 text-xs font-semibold transition"
-              >
-                <span>
-                  {isOpen
-                    ? "Ocultar tallas y acciones"
-                    : "Gestionar tallas y publicaciones"}
-                </span>
-                <span
-                  className={`transform transition ${
-                    isOpen ? "rotate-180" : "rotate-0"
-                  }`}
-                >
-                  ˅
-                </span>
-              </button>
-            </div>
-
-            {/* Panel expandible con tallas */}
-            {isOpen && (
-              <div className="px-4 pb-4 border-t border-neutral-100 dark:border-neutral-700 text-xs">
-                <div className="grid grid-cols-[1.2fr,1.1fr,0.9fr,1.3fr,1.3fr] gap-2 py-2 text-[10px] text-neutral-500 dark:text-neutral-400 font-semibold">
-                  <div>Talla</div>
-                  <div>SKU</div>
-                  <div className="text-center">Stock ML</div>
-                  <div>Estado ML</div>
-                  <div className="text-center">Acción</div>
-                </div>
-
-                {cols.map((t) => {
-                  const p = fam.byTalla[t.id];
-                  if (!p) return null;
-
-                  const published = isSkuPublished(p.sku);
-                  const activeItemId = firstActiveItemId(p.sku);
-                  const stock = p.stockml || 0;
-
-                  const stockColor =
-                    stock === 0
-                      ? "text-red-600 dark:text-red-400"
-                      : stock < 5
-                      ? "text-orange-500 dark:text-orange-400"
-                      : "text-green-700 dark:text-green-400";
-
-                  return (
-                    <div
-                      key={t.id}
-                      className="grid grid-cols-[1.2fr,1.1fr,0.9fr,1.3fr,1.3fr] gap-2 items-center py-1.5 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-800"
-                    >
-                      {/* Talla */}
-                      <div className="font-semibold text-neutral-800 dark:text-neutral-200">
-                        {t.etiqueta}
-                      </div>
-
-                      {/* SKU */}
-                      <div className="text-[10px] text-neutral-500 dark:text-neutral-400 truncate">
-                        {p.sku}
-                      </div>
-
-                      {/* Stock */}
-                      <div
-                        className={`text-center text-[11px] font-semibold ${stockColor}`}
-                      >
-                        {stock}
-                      </div>
-
-                      {/* Estado */}
-                      <div className="text-[10px]">
-                        {published && activeItemId ? (
-                          <a
-                            href={`https://articulo.mercadolibre.cl/${activeItemId}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300"
-                          >
-                            <LinkIcon size={10} />
-                            <span>Publicado</span>
-                          </a>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400">
-                            Sin publicar
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Acción */}
-                      <div className="flex justify-center">
-                        <button
-                          onClick={() => handleCellAction(p)}
-                          disabled={!connected || rowBusy === p.sku}
-                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold text-white transition
-                            ${
-                              published
-                                ? "bg-blue-600 hover:bg-blue-700"
-                                : "bg-amber-600 hover:bg-amber-700"
-                            }
-                            disabled:opacity-40`}
-                          title={
-                            published
-                              ? "Refrescar publicación en Mercado Libre"
-                              : "Publicar esta talla en Mercado Libre"
-                          }
-                        >
-                          {rowBusy === p.sku ? (
-                            <RefreshCw size={10} className="animate-spin" />
-                          ) : published ? (
-                            <Repeat size={10} />
-                          ) : (
-                            <Upload size={10} />
-                          )}
-                          <span>{published ? "Refrescar" : "Publicar"}</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  )}
-</div>
-
-
-      {/* Modal de previsualización */}
-{showPreview && draft && (
-  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 transition-colors">
-    <div className="w-full max-w-3xl bg-white dark:bg-neutral-900 rounded-2xl shadow-xl overflow-hidden border border-neutral-200 dark:border-neutral-700">
-      {/* Header modal */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200 dark:border-neutral-700">
-        <h3 className="font-semibold text-neutral-900 dark:text-white">
-          Previsualizar publicación
-        </h3>
         <button
-          onClick={() => setShowPreview(false)}
-          className="p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300"
+          onClick={handleSyncAll}
+          disabled={syncing}
+          className="flex items-center space-x-2 px-4 py-2 bg-green-700 hover:bg-green-800 text-white rounded-lg disabled:opacity-50 transition-all"
         >
-          <X size={18} />
+          <RefreshCw size={18} className={syncing ? "animate-spin" : ""} />
+          <span>{syncing ? "Sincronizando…" : "Sincronizar ahora"}</span>
         </button>
       </div>
 
-      <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Formulario */}
-        <div className="space-y-3">
-          <label className="text-sm text-neutral-700 dark:text-neutral-300">
-            Título
-          </label>
-          <input
-            className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
-            value={draft.title}
-            onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-          />
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm text-neutral-700 dark:text-neutral-300">
-                Precio
-              </label>
-              <input
-                className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
-                type="number"
-                value={draft.price}
-                onChange={(e) =>
-                  setDraft({ ...draft, price: Number(e.target.value) || 0 })
-                }
+      {/* Métricas */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Estado */}
+        <div className="bg-white dark:bg-[#1a1a1a] rounded-xl shadow-sm border border-amber-100 dark:border-amber-800 p-6 transition-colors">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400 uppercase">
+              Estado
+            </h3>
+            {connected ? (
+              <CheckCircle
+                className="text-green-600 dark:text-green-400"
+                size={20}
               />
-            </div>
-            <div>
-              <label className="text-sm text-neutral-700 dark:text-neutral-300">
-                Cantidad
-              </label>
-              <input
-                className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
-                type="number"
-                value={draft.available_quantity}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    available_quantity: Number(e.target.value) || 0,
-                  })
-                }
+            ) : (
+              <AlertCircle
+                className="text-red-600 dark:text-red-400"
+                size={20}
               />
-            </div>
-          </div>
-
-          {/* Categoría (asignada automáticamente) */}
-          <label className="text-sm text-neutral-700 dark:text-neutral-300">
-            Categoría
-          </label>
-          <div className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-medium">
-                  {draftCatName ||
-                    currentProductRef.current?.categoria_nombre ||
-                    "—"}
-                </div>
-                <div className="text-xs text-neutral-500 dark:text-neutral-400">
-                  {draft.category_id} · valor asignado para Mercado Libre
-                </div>
-              </div>
-              <span className="text-[11px] px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-semibold">
-                Asignada automáticamente
-              </span>
-            </div>
-          </div>
-
-          {/* Guía de tallas + Talla resultante */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm text-neutral-700 dark:text-neutral-300">
-                Guía de tallas (ML)
-              </label>
-              <select
-                className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
-                value={selectedGuideId}
-                onChange={async (e) => {
-                  const gid = e.target.value;
-                  setSelectedGuideId(gid);
-                  if (gid) await recomputeSizeByGuide(gid, draft?.category_id);
-                }}
-              >
-                <option value="">(usar guía por categoría)</option>
-                {GUIDE_OPTIONS.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.label} · {g.id}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                Guía actual:{" "}
-                <strong>
-                  {selectedGuideId || "(auto por categoría)"}
-                </strong>
-              </p>
-            </div>
-
-            <div>
-              <label className="text-sm text-neutral-700 dark:text-neutral-300">
-                Talla a publicar
-              </label>
-              <div className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-white">
-                <span className="font-semibold">{sizeValue || "—"}</span>
-              </div>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                Se enviará en el atributo <code>SIZE</code>.
-              </p>
-            </div>
-          </div>
-
-          {draftError && (
-            <p className="text-sm text-red-600 dark:text-red-400">
-              {draftError}
-            </p>
-          )}
-
-          <div className="flex gap-2 pt-2">
-            <button
-              onClick={confirmPublish}
-              disabled={draftSending}
-              className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 rounded-lg disabled:opacity-50 transition-all"
-            >
-              {draftSending ? "Publicando…" : "Publicar ahora"}
-            </button>
-            <button
-              onClick={() => setShowPreview(false)}
-              className="px-4 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200"
-            >
-              Cancelar
-            </button>
-          </div>
-        </div>
-
-        {/* Vista previa + dropzone */}
-        <div className="border border-neutral-300 dark:border-neutral-700 rounded-xl p-4 bg-neutral-50 dark:bg-neutral-800 transition-colors">
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-2">
-            Imágenes
-          </p>
-
-          <div
-            className={`h-40 flex items-center justify-center relative rounded-md border-2 ${
-              isDragging
-                ? "border-amber-500 border-dashed bg-amber-50 dark:bg-amber-900/20"
-                : "border-transparent"
-            }`}
-            onDragEnter={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              dragCounter.current++;
-              setIsDragging(true);
-            }}
-            onDragOver={(e) => e.preventDefault()}
-            onDragLeave={(e) => {
-              dragCounter.current = Math.max(0, dragCounter.current - 1);
-              if (dragCounter.current === 0) setIsDragging(false);
-            }}
-            onDrop={async (e) => {
-              e.preventDefault();
-              dragCounter.current = 0;
-              setIsDragging(false);
-              try {
-                const file = e.dataTransfer?.files?.[0];
-                if (!file) return;
-                if (!file.type.startsWith("image/"))
-                  throw new Error("Solo se permiten imágenes");
-                const url = await uploadFileToStorage(file);
-                setDraft((d) =>
-                  d ? { ...d, pictures: [url, ...d.pictures] } : d
-                );
-              } catch (err: any) {
-                setDraftError(err?.message || "No se pudo cargar la imagen");
-              }
-            }}
-          >
-            <img
-              src={
-                draft.pictures[0] ||
-                "https://http2.mlstatic.com/D_NQ_NP_2X_000000-MLC0000000000_000000-F.jpg"
-              }
-              alt="preview"
-              className="h-full object-contain"
-            />
-            {isDragging && (
-              <div className="absolute inset-0 flex items-center justify-center text-sm font-medium text-amber-700 dark:text-amber-300">
-                Suelta la imagen para subirla
-              </div>
             )}
           </div>
 
-          {draft.pictures.length > 0 && (
-            <div className="mt-4 grid grid-cols-4 gap-3">
-              {draft.pictures.map((url, i) => (
-                <div key={url + i} className="relative group">
-                  <img
-                    src={url}
-                    className="h-20 w-full object-cover rounded-md border border-neutral-300 dark:border-neutral-700"
-                  />
-                  <button
-                    title="Eliminar"
-                    onClick={() =>
-                      setDraft((d) =>
-                        d
-                          ? {
-                              ...d,
-                              pictures: d.pictures.filter((_, idx) => idx !== i),
-                            }
-                          : d
-                      )
-                    }
-                    className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition bg-white/80 dark:bg-neutral-800/80 rounded-full p-1 shadow"
-                  >
-                    <Trash2 size={14} className="text-neutral-700 dark:text-neutral-300" />
-                  </button>
-                </div>
-              ))}
-            </div>
+          {connected ? (
+            <>
+              <p className="text-2xl font-bold text-green-600 dark:text-green-400">
+                Conectado
+              </p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                {health?.nickname ? `@${health.nickname} · ` : ""}
+                {typeof expiresInMin === "number"
+                  ? `expira en ${expiresInMin} min`
+                  : ""}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-2xl font-bold text-red-600 dark:text-red-400">
+                Desconectado
+              </p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                Conecta tu cuenta para continuar.
+              </p>
+            </>
           )}
+        </div>
 
-          <div className="p-3 space-y-1 mt-4 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900">
-            <div className="text-sm text-neutral-500 dark:text-neutral-400">
-              {draft.category_id} · valor asignado para Mercado Libre
-            </div>
-            <div className="font-semibold text-neutral-900 dark:text-white">
-              {draft.title}
-            </div>
-            <div className="text-lg font-bold text-amber-700 dark:text-amber-400">
-              {new Intl.NumberFormat("es-CL", {
-                style: "currency",
-                currency: "CLP",
-              }).format(draft.price || 0)}
-            </div>
-            <div className="text-sm text-neutral-600 dark:text-neutral-400">
-              Stock: {draft.available_quantity} ·{" "}
-              {draft.condition === "new" ? "Nuevo" : "Usado"}
-            </div>
-          </div>
+        {/* Productos con stock ML */}
+        <div className="bg-white dark:bg-[#1a1a1a] rounded-xl shadow-sm border border-amber-100 dark:border-amber-800 p-6 transition-colors">
+          <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400 uppercase mb-2">
+            Productos con stock ML
+          </h3>
+          <p className="text-2xl font-bold text-neutral-900 dark:text-white">
+            {fams.length}
+          </p>
+          <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">
+            agrupadas por nombre + categoría
+          </p>
+        </div>
 
-          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-3">
-            El resultado final puede variar según validaciones de Mercado Libre.
+        {/* Stock ML Total */}
+        <div className="bg-white dark:bg-[#1a1a1a] rounded-xl shadow-sm border border-amber-100 dark:border-amber-800 p-6 transition-colors">
+          <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400 uppercase mb-2">
+            Stock ML Total
+          </h3>
+          <p className="text-2xl font-bold text-neutral-900 dark:text-white">
+            {totalStockML}
+          </p>
+          <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">
+            unidades
           </p>
         </div>
       </div>
-    </div>
-  </div>
-)}
 
+      {/* Tarjetas de productos con detalle de tallas */}
+      <div className="bg-white dark:bg-neutral-900 rounded-xl p-6 border border-neutral-200 dark:border-neutral-700 transition-colors">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-lg font-bold text-neutral-900 dark:text-white">
+            Productos en {config.title}
+          </h3>
+          <span className="text-sm text-neutral-600 dark:text-neutral-400">
+            Última sync: {formatDate(lastSync)}
+          </span>
+        </div>
+
+        {fams.length === 0 ? (
+          <div className="text-center py-12 text-neutral-500 dark:text-neutral-400">
+            No hay productos para mostrar.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {fams.map((fam, idx) => {
+              const cols = columnsForFam(fam);
+              const totalFam = cols.reduce(
+                (acc, t) => acc + (fam.byTalla[t.id]?.stockml || 0),
+                0
+              );
+
+              const firstSkuProduct = Object.values(fam.byTalla)[0];
+              const famKey = `${fam.name}::${fam.categoria_id ?? 0}::${
+                fam.tipo
+              }`;
+
+              return (
+                <div
+                  key={famKey + idx}
+                  className="bg-[#FFFDE8] border border-[#FFE082] rounded-2xl shadow-sm hover:shadow-md overflow-hidden transition flex flex-col p-4"
+                >
+                  {/* ENCABEZADO */}
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <h4 className="font-semibold text-[15px] text-neutral-900 line-clamp-2">
+                        {fam.name}
+                      </h4>
+                      <p className="text-xs text-neutral-500">
+                        {fam.categoria_nombre || "Sin categoría"}
+                      </p>
+                      <p className="text-[11px] text-neutral-400 mt-1">
+                        SKU:{" "}
+                        <span className="font-mono text-neutral-700">
+                          {firstSkuProduct?.sku || "-"}
+                        </span>
+                      </p>
+                    </div>
+                    <p className="text-sm font-semibold text-amber-700">
+                      {new Intl.NumberFormat("es-CL", {
+                        style: "currency",
+                        currency: "CLP",
+                      }).format(firstSkuProduct?.price || 0)}
+                    </p>
+                  </div>
+
+                  {/* STOCK + PRECIO BASE */}
+                  <div className="flex justify-between items-center border-t border-[#FFE082]/60 pt-2 text-[12px]">
+                    <span>
+                      <span className="text-neutral-500">Stock ML total:</span>{" "}
+                      <span
+                        className={`font-semibold ${
+                          totalFam === 0
+                            ? "text-red-600"
+                            : totalFam < 5
+                            ? "text-orange-500"
+                            : "text-green-700"
+                        }`}
+                      >
+                        {totalFam} unid.
+                      </span>
+                    </span>
+                    <span>
+                      <span className="text-neutral-500">Desde</span>{" "}
+                      <span className="font-semibold text-neutral-800">
+                        {new Intl.NumberFormat("es-CL", {
+                          style: "currency",
+                          currency: "CLP",
+                        }).format(firstSkuProduct?.price || 0)}
+                      </span>
+                    </span>
+                  </div>
+
+                  {/* ESTADO + BOTÓN */}
+                  <div className="mt-3 flex flex-col gap-2">
+                    {/* Estado pequeño arriba */}
+                    <div className="flex justify-end">
+                      {(() => {
+                        const allPublished = Object.values(
+                          fam.byTalla || {}
+                        ).every((p) => isSkuPublished(p.sku));
+                        const partiallyPublished = Object.values(
+                          fam.byTalla || {}
+                        ).some((p) => isSkuPublished(p.sku));
+
+                        if (allPublished) {
+                          return (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#E6F9EC] text-[#00A650] border border-[#00A650]/20 text-[10px] font-semibold">
+                              <CheckCircle size={11} />
+                              Publicado
+                            </span>
+                          );
+                        }
+                        if (partiallyPublished) {
+                          return (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FFF5CC] text-[#7A5900] border border-[#FFE600]/40 text-[10px] font-semibold">
+                              <AlertCircle size={11} />
+                              Parcial
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FFF2B2] text-[#7A5900] border border-[#FFD54F]/60 text-[10px] font-semibold">
+                            <X size={11} />
+                            No publicado
+                          </span>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Botón principal */}
+                    <button
+                      onClick={() => {
+                        setDraftFamily({
+                          title: fam.name,
+                          category_id: getMeliCategory(fam.categoria_id),
+                          price: Object.values(fam.byTalla)[0]?.price || 0,
+                          available_quantity: Object.values(fam.byTalla).reduce(
+                            (acc, p: any) => acc + (p.stockml || 0),
+                            0
+                          ),
+                          pictures: [],
+                          color: "",
+                          byTalla: fam.byTalla, // 👈 MUY IMPORTANTE
+                        });
+                        setShowFamilyPreview(true);
+                      }}
+                      disabled={!connected || rowBusy === fam.name}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#3483FA] hover:bg-[#2968C8] text-white text-xs font-semibold rounded-md shadow-sm transition disabled:opacity-50"
+                    >
+                      {rowBusy === fam.name ? (
+                        <RefreshCw size={12} className="animate-spin" />
+                      ) : (
+                        <Upload size={12} />
+                      )}
+                      <span>
+                        {rowBusy === fam.name
+                          ? "Preparando..."
+                          : "Publicar familia en Mercado Libre"}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {/* Modal de previsualización de familia */}
+      {showFamilyPreview && draftFamily && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 transition-colors">
+          <div className="w-full max-w-3xl bg-white dark:bg-neutral-900 rounded-2xl shadow-xl overflow-hidden border border-neutral-200 dark:border-neutral-700">
+            {/* Header modal */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200 dark:border-neutral-700">
+              <h3 className="font-semibold text-neutral-900 dark:text-white">
+                Previsualizar publicación familiar
+              </h3>
+              <button
+                onClick={() => setShowFamilyPreview(false)}
+                className="p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-600 dark:text-neutral-300"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* FORMULARIO */}
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm text-neutral-700 dark:text-neutral-300">
+                    Título de publicación
+                  </label>
+                  <input
+                    className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                    value={draftFamily.title}
+                    onChange={(e) =>
+                      setDraftFamily({ ...draftFamily, title: e.target.value })
+                    }
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm text-neutral-700 dark:text-neutral-300">
+                      Precio base
+                    </label>
+                    <input
+                      type="number"
+                      className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                      value={draftFamily.price}
+                      onChange={(e) =>
+                        setDraftFamily({
+                          ...draftFamily,
+                          price: Number(e.target.value) || 0,
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm text-neutral-700 dark:text-neutral-300">
+                      Stock total
+                    </label>
+                    <input
+                      type="number"
+                      className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                      value={draftFamily.available_quantity}
+                      onChange={(e) =>
+                        setDraftFamily({
+                          ...draftFamily,
+                          available_quantity: Number(e.target.value) || 0,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm text-neutral-700 dark:text-neutral-300">
+                    Color principal
+                  </label>
+                  <input
+                    className="w-full border border-neutral-300 dark:border-neutral-700 rounded-xl p-3 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                    placeholder="Ej: Negro, Azul Marino, Blanco..."
+                    value={draftFamily.color || ""}
+                    onChange={(e) =>
+                      setDraftFamily({ ...draftFamily, color: e.target.value })
+                    }
+                  />
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                    Este valor se enviará en el atributo <code>COLOR</code>.
+                  </p>
+                </div>
+
+                <div className="flex gap-2 pt-4">
+                  <button
+                    onClick={() => {
+                      publishFamily(draftFamily);
+                      setShowFamilyPreview(false);
+                    }}
+                    className="flex-1 bg-[#3483FA] hover:bg-[#2968C8] text-white py-2 rounded-lg font-semibold disabled:opacity-50 transition"
+                  >
+                    Publicar ahora
+                  </button>
+                  <button
+                    onClick={() => setShowFamilyPreview(false)}
+                    className="px-4 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+
+              {/* IMÁGENES / SELECCIÓN DE ARCHIVOS */}
+              <div className="border border-neutral-300 dark:border-neutral-700 rounded-xl p-4 bg-neutral-50 dark:bg-neutral-800">
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                  Imágenes del producto
+                </p>
+
+                {/* Imagen principal */}
+                <div className="flex flex-col items-center justify-center border-2 border-dashed border-amber-300 rounded-xl bg-white dark:bg-neutral-900 py-6">
+                  {draftFamily.pictures?.length > 0 ? (
+                    <img
+                      src={draftFamily.pictures[0]}
+                      alt="preview"
+                      className="h-36 object-contain mb-2"
+                    />
+                  ) : (
+                    <div className="h-36 flex items-center justify-center text-neutral-400 dark:text-neutral-500 text-sm">
+                      Sin imagen seleccionada
+                    </div>
+                  )}
+
+                  <label
+                    htmlFor="fileInput"
+                    className="cursor-pointer bg-[#3483FA] hover:bg-[#2968C8] text-white px-4 py-2 rounded-lg text-sm font-medium transition"
+                  >
+                    Subir imagen
+                  </label>
+                  <input
+                    id="fileInput"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      try {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        if (!file.type.startsWith("image/"))
+                          throw new Error("Solo se permiten imágenes");
+                        const url = await uploadFileToStorage(file);
+                        setDraftFamily((d) =>
+                          d
+                            ? { ...d, pictures: [url, ...(d.pictures || [])] }
+                            : d
+                        );
+                      } catch (err: any) {
+                        alert(err?.message || "No se pudo cargar la imagen");
+                      }
+                    }}
+                  />
+                </div>
+
+                {/* Galería secundaria */}
+                {draftFamily.pictures?.length > 1 && (
+                  <div className="mt-4 grid grid-cols-4 gap-3">
+                    {draftFamily.pictures.slice(1).map((url, i) => (
+                      <div key={url + i} className="relative group">
+                        <img
+                          src={url}
+                          className="h-20 w-full object-cover rounded-md border border-neutral-300 dark:border-neutral-700"
+                        />
+                        <button
+                          onClick={() =>
+                            setDraftFamily((d) =>
+                              d
+                                ? {
+                                    ...d,
+                                    pictures: d.pictures.filter(
+                                      (_, idx) => idx !== i + 1
+                                    ),
+                                  }
+                                : d
+                            )
+                          }
+                          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition bg-white/80 dark:bg-neutral-800/80 rounded-full p-1 shadow"
+                        >
+                          <Trash2
+                            size={14}
+                            className="text-neutral-700 dark:text-neutral-300"
+                          />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
-
 export default ChannelView;

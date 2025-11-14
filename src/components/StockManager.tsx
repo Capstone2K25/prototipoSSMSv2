@@ -93,49 +93,55 @@ const FamCard = ({
   useEffect(() => {
     setIsOpen(expandAll);
   }, [expandAll]);
+  const [deleting, setDeleting] = useState(false);
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm hover:shadow-md border border-neutral-200 overflow-hidden transition flex flex-col">
-      {/* Header */}
-      <div className="p-4 flex flex-col gap-1">
-        <div className="flex items-center justify-between">
-          <div>
-            <h4 className="font-semibold text-neutral-900">{fam.name}</h4>
-            <p className="text-xs text-neutral-500">
-              {fam.categoria_id ? catById[fam.categoria_id] : "Sin categoría"} ·{" "}
-              {fam.tipo === "numerica" ? "Numérica" : "Alfanumérica"}
-            </p>
+  <div className="bg-white rounded-2xl shadow-sm hover:shadow-md border border-neutral-200 overflow-hidden transition flex flex-col">
+    {/* Header */}
+    <div className="p-4 flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <div>
+          <h4 className="font-semibold text-neutral-900">{fam.name}</h4>
+          <p className="text-xs text-neutral-500">
+            {fam.categoria_id ? catById[fam.categoria_id] : "Sin categoría"} ·{" "}
+            {fam.tipo === "numerica" ? "Numérica" : "Alfanumérica"}
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-sm font-bold text-neutral-800">
+            {totalFam} unidades
           </div>
-          <div className="text-right">
-            <div className="text-sm font-bold text-neutral-800">
-              {totalFam} unidades
-            </div>
-            <div className="flex gap-3 mt-2 justify-end">
-              <button
-                onClick={() => openEditFamily(fam)}
-                className="text-blue-600 hover:text-blue-800 text-xs font-semibold flex items-center gap-1"
-              >
-                <Pencil size={14} /> Editar
-              </button>
+          <div className="flex gap-3 mt-2 justify-end">
+            {/* Editar */}
+            <button
+              onClick={() => openEditFamily(fam)}
+              disabled={deleting}
+              className="text-blue-600 hover:text-blue-800 text-xs font-semibold flex items-center gap-1"
+            >
+              <Pencil size={14} /> Editar
+            </button>
 
-              <button
-                onClick={async () => {
-                  if (
-                    !confirm(
-                      `¿Eliminar "${fam.name}" y todas sus tallas? Esta acción no se puede deshacer.`
-                    )
+            {/* Eliminar */}
+            <button
+              onClick={async () => {
+                if (
+                  !confirm(
+                    `¿Eliminar "${fam.name}" y todas sus tallas? Esta acción no se puede deshacer.`
                   )
-                    return;
+                )
+                  return;
+
+                try {
+                  setDeleting(true);
 
                   const items = Object.values(fam.byTalla);
                   const ids = items.map((p) => p.id);
                   const skus = items.map((p) => String(p.sku));
 
-                  // Eliminamos en Woo (best-effort)
-                  // B2B UPDATE
+                  // Eliminamos en Woo + B2B
                   await Promise.allSettled([
                     ...skus.map((s) => wooDeleteProductLocal(s)),
-                    ...skus.map((s) => b2bDeleteProductLocal(s)), 
+                    ...skus.map((s) => b2bDeleteProductLocal(s)),
                   ]);
 
                   // Eliminamos en BD
@@ -152,73 +158,98 @@ const FamCard = ({
                   toast.success(
                     `Producto "${fam.name}" eliminado (${ids.length} talla(s)).`
                   );
-                  location.reload(); // recarga para reflejar cambios (o podrías llamar fetchProducts)
-                }}
-                className="text-red-600 hover:text-red-800 text-xs font-semibold flex items-center gap-1"
-              >
-                <Trash2 size={14} /> Eliminar
-              </button>
 
-              <button
-                onClick={toggle}
-                className="text-neutral-600 hover:text-neutral-800 text-xs font-semibold flex items-center gap-1"
-              >
-                {isOpen ? "Ocultar" : "Ver"} <span>{isOpen ? "˄" : "˅"}</span>
-              </button>
-            </div>
+                  // Recarga datos o página
+                  location.reload();
+                } catch (err) {
+                  console.error(err);
+                  toast.error("Error al eliminar el producto.");
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+              disabled={deleting}
+              className={`text-xs font-semibold flex items-center gap-1 ${
+                deleting
+                  ? "text-neutral-400 cursor-not-allowed"
+                  : "text-red-600 hover:text-red-800"
+              }`}
+            >
+              {deleting ? (
+                <>
+                  <span className="animate-spin border-2 border-red-600 border-t-transparent rounded-full w-3 h-3"></span>
+                  <span>Eliminando…</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 size={14} /> Eliminar
+                </>
+              )}
+            </button>
+
+            {/* Expandir / colapsar */}
+            <button
+              onClick={toggle}
+              disabled={deleting}
+              className="text-neutral-600 hover:text-neutral-800 text-xs font-semibold flex items-center gap-1"
+            >
+              {isOpen ? "Ocultar" : "Ver"} <span>{isOpen ? "˄" : "˅"}</span>
+            </button>
           </div>
         </div>
       </div>
-
-      {/* Expandible */}
-      {isOpen && (
-        <div className="px-4 pb-4 border-t border-neutral-100 text-xs overflow-x-auto">
-          <div className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr,0.7fr,1fr] gap-2 py-2 font-semibold text-[11px] text-neutral-500">
-            <div>Talla</div>
-            <div className="text-center">B2B</div>
-            <div className="text-center">Web</div>
-            <div className="text-center">ML</div>
-            <div className="text-center">Total</div>
-            <div className="text-center">Precio</div>
-          </div>
-
-          {cols.map((t: any) => {
-            const p = fam.byTalla[t.id];
-            if (!p) return null;
-            const total =
-              (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0);
-            const cls = getStockStatusClass(total);
-
-            return (
-              <div
-                key={t.id}
-                className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr,0.7fr,1fr] gap-2 items-center py-1.5 rounded-md hover:bg-neutral-50"
-              >
-                <div className="font-semibold text-neutral-800">
-                  {t.etiqueta}
-                </div>
-                <div className="text-center text-[11px] font-semibold text-fuchsia-700">
-                  {p.stockb2b}
-                </div>
-                <div className="text-center text-[11px] font-semibold text-blue-700">
-                  {p.stockweb}
-                </div>
-                <div className="text-center text-[11px] font-semibold text-amber-700">
-                  {p.stockml}
-                </div>
-                <div className={`text-center text-[11px] font-semibold ${cls}`}>
-                  {total}
-                </div>
-                <div className="text-center text-[11px] text-neutral-600">
-                  {p.price ? formatPrice(p.price) : "—"}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
     </div>
-  );
+
+    {/* Expandible */}
+    {isOpen && (
+      <div className="px-4 pb-4 border-t border-neutral-100 text-xs overflow-x-auto">
+        <div className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr,0.7fr,1fr] gap-2 py-2 font-semibold text-[11px] text-neutral-500">
+          <div>Talla</div>
+          <div className="text-center">B2B</div>
+          <div className="text-center">Web</div>
+          <div className="text-center">ML</div>
+          <div className="text-center">Total</div>
+          <div className="text-center">Precio</div>
+        </div>
+
+        {cols.map((t: any) => {
+          const p = fam.byTalla[t.id];
+          if (!p) return null;
+          const total =
+            (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0);
+          const cls = getStockStatusClass(total);
+
+          return (
+            <div
+              key={t.id}
+              className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr,0.7fr,1fr] gap-2 items-center py-1.5 rounded-md hover:bg-neutral-50"
+            >
+              <div className="font-semibold text-neutral-800">
+                {t.etiqueta}
+              </div>
+              <div className="text-center text-[11px] font-semibold text-fuchsia-700">
+                {p.stockb2b}
+              </div>
+              <div className="text-center text-[11px] font-semibold text-blue-700">
+                {p.stockweb}
+              </div>
+              <div className="text-center text-[11px] font-semibold text-amber-700">
+                {p.stockml}
+              </div>
+              <div className={`text-center text-[11px] font-semibold ${cls}`}>
+                {total}
+              </div>
+              <div className="text-center text-[11px] text-neutral-600">
+                {p.price ? formatPrice(p.price) : "—"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    )}
+  </div>
+);
+
 };
 
 export const StockManager = () => {
@@ -563,233 +594,228 @@ export const StockManager = () => {
 
   // ====== Guardar
   const saveProduct = async () => {
-    try {
-      if (isExistingSKU && editingFamily) {
-        // ---- MODO EDITAR FAMILIA ----
-        const updates: Array<{
-          id: number;
-          stockb2b: number;
-          stockweb: number;
-          stockml: number;
-          price: number;
-        }> = [];
-        const creates: Array<{
-          name: string;
-          price: number;
-          categoria_id: number | null;
-          talla_id: number;
-          stockb2b: number;
-          stockweb: number;
-          stockml: number;
-        }> = [];
+  try {
+    if (isExistingSKU && editingFamily) {
+      // ---- MODO EDITAR FAMILIA ----
+      const updates: Array<{
+        id: number;
+        stockb2b: number;
+        stockweb: number;
+        stockml: number;
+        price: number;
+      }> = [];
+      const creates: Array<{
+        name: string;
+        sku: string;
+        price: number;
+        categoria_id: number | null;
+        talla_id: number;
+        stockb2b: number;
+        stockweb: number;
+        stockml: number;
+      }> = [];
 
-        for (const t of editingFamily.cols) {
-          const v = editingFamily.values[t.id];
-          if (!v) continue;
+      for (const t of editingFamily.cols) {
+        const v = editingFamily.values[t.id];
+        if (!v) continue;
 
-          const b2b = Math.max(0, Number(v.b2b || 0));
-          const web = Math.max(0, Number(v.web || 0));
-          const ml = Math.max(0, Number(v.ml || 0));
-          const price = Math.max(
-            0,
-            Number(v.price ?? editingFamily.basePrice ?? 0)
-          );
+        const b2b = Math.max(0, Number(v.b2b || 0));
+        const web = Math.max(0, Number(v.web || 0));
+        const ml = Math.max(0, Number(v.ml || 0));
+        const price = Math.max(
+          0,
+          Number(v.price ?? editingFamily.basePrice ?? 0)
+        );
 
-          if (v.id) {
-            updates.push({
-              id: v.id,
+        if (v.id) {
+          updates.push({
+            id: v.id,
+            stockb2b: b2b,
+            stockweb: web,
+            stockml: ml,
+            price,
+          });
+        } else {
+          const total = b2b + web + ml;
+          if (total > 0) {
+            creates.push({
+              name: editingFamily.name,
+              sku: editingFamily.sku || "", // 👈 usa el mismo SKU de la familia
+              price,
+              categoria_id: editingFamily.categoria_id ?? null,
+              talla_id: t.id,
               stockb2b: b2b,
               stockweb: web,
               stockml: ml,
-              price,
             });
-          } else {
-            const total = b2b + web + ml;
-            if (total > 0) {
-              creates.push({
-                name: editingFamily.name,
-                price,
-                categoria_id: editingFamily.categoria_id ?? null,
-                talla_id: t.id,
-                stockb2b: b2b,
-                stockweb: web,
-                stockml: ml,
-              });
-            }
           }
         }
+      }
 
-        // UPDATE existentes (incluye precio)
-        if (updates.length) {
-          const res = await Promise.allSettled(
-            updates.map((u) =>
-              supabase
-                .from("productos")
-                .update({
-                  stockb2b: u.stockb2b,
-                  stockweb: u.stockweb,
-                  stockml: u.stockml,
-                  price: u.price,
-                })
-                .eq("id", u.id)
-            )
-          );
-          const failed = res.filter(
-            (r) => r.status === "rejected" || (r as any).value?.error
-          ).length;
-          if (failed)
-            toastAndLog("Algunas tallas no pudieron actualizarse.", "error");
-        }
+      // UPDATE existentes (incluye precio)
+      if (updates.length) {
+        const res = await Promise.allSettled(
+          updates.map((u) =>
+            supabase
+              .from("productos")
+              .update({
+                stockb2b: u.stockb2b,
+                stockweb: u.stockweb,
+                stockml: u.stockml,
+                price: u.price,
+              })
+              .eq("id", u.id)
+          )
+        );
+        const failed = res.filter(
+          (r) => r.status === "rejected" || (r as any).value?.error
+        ).length;
+        if (failed)
+          toastAndLog("Algunas tallas no pudieron actualizarse.", "error");
+      }
 
-        // INSERT nuevos (BD genera SKU)
-        let createdRows: any[] = [];
-        if (creates.length) {
-          const { data, error } = await supabase
-            .from("productos")
-            .insert(creates)
-            .select();
-          if (error) {
-            console.error(error);
-            toastAndLog("No se pudieron crear algunas tallas.", "error");
-          } else createdRows = data || [];
-        }
+      // INSERT nuevos (todas comparten el mismo SKU)
+      let createdRows: any[] = [];
+      if (creates.length) {
+        const { data, error } = await supabase
+          .from("productos")
+          .insert(creates)
+          .select();
+        if (error) {
+          console.error(error);
+          toastAndLog("No se pudieron crear algunas tallas.", "error");
+        } else createdRows = data || [];
+      }
 
-        // Woo best-effort
-        // B2B UPDATE:
-        try {
-          // ✅ Para updates: sincroniza precio + stock en AMBOS canales
-          await Promise.allSettled([
-            ...updates.map((u) => {
-              const p = products.find((pp) => pp.id === u.id);
-              if (!p?.sku) return Promise.resolve();
-              // Sincroniza WEB
-              return wooUpdateProductLocal({
+      // Woo + B2B sync
+      try {
+        await Promise.allSettled([
+          // actualizaciones
+          ...updates.map((u) => {
+            const p = products.find((pp) => pp.id === u.id);
+            if (!p?.sku) return Promise.resolve();
+            return Promise.allSettled([
+              wooUpdateProductLocal({
                 skuLocal: String(p.sku),
                 price: Number(u.price),
                 absoluteStockWeb: Number(u.stockweb),
-              });
-            }),
-            ...updates.map((u) => {
-              const p = products.find((pp) => pp.id === u.id);
-              if (!p?.sku) return Promise.resolve();
-              // Sincroniza B2B
-              return b2bUpdateProductLocal({
+              }),
+              b2bUpdateProductLocal({
                 skuLocal: String(p.sku),
                 price: Number(u.price),
                 absoluteStockB2b: Number(u.stockb2b),
-              });
-            }),
-          ]);
-
-          // Para los nuevos: crea en AMBOS canales y setea stock inicial
-          await Promise.allSettled([
-            ...createdRows.map((row) =>
+              }),
+            ]);
+          }),
+          // nuevas
+          ...createdRows.map((row) =>
+            Promise.allSettled([
               wooCreateProductLocal({
                 skuLocal: row.sku,
                 name: row.name,
                 price: Number(row.price),
                 initialStockWeb: Number(row.stockweb || 0),
-              })
-            ),
-            ...createdRows.map((row) =>
+              }),
               b2bCreateProductLocal({
                 skuLocal: row.sku,
                 name: row.name,
                 price: Number(row.price),
                 initialStockB2b: Number(row.stockb2b || 0),
-              })
-            ),
-          ]);
-        } catch {
-          /* ignoramos errores de Woo */
-        }
-
-        const msg: string[] = [];
-        if (updates.length) msg.push(`Actualizadas ${updates.length}`);
-        if (creates.length) msg.push(`Creadas ${creates.length}`);
-        toastAndLog(msg.join(" · ") || "Sin cambios", "sync");
-      } else {
-        // ---- MODO CREAR ----
-        const name = (editingProduct?.name || "").toString().trim();
-        const categoria_id = Number(editingProduct?.categoria_id || 0) || null;
-        if (!name || !categoria_id)
-          return toast.error("Completa nombre y categoría.");
-
-        const matrix = editingProduct?.matrix || {};
-        const rows = Object.entries(matrix)
-          .map(([tId, v]: any) => {
-            const b2b = Math.max(0, Number(v?.b2b || 0));
-            const web = Math.max(0, Number(v?.web || 0));
-            const ml = Math.max(0, Number(v?.ml || 0));
-            const total = b2b + web + ml;
-            if (total === 0) return null;
-            const price = Math.max(
-              0,
-              Number(v?.price ?? editingProduct?.basePrice ?? 0)
-            );
-            return {
-              name,
-              price,
-              categoria_id,
-              talla_id: Number(tId),
-              stockb2b: b2b,
-              stockweb: web,
-              stockml: ml,
-            };
-          })
-          .filter(Boolean) as any[];
-
-        if (!rows.length)
-          return toast.error("Ingresa stock en al menos una talla.");
-
-        const { data, error } = await supabase
-          .from("productos")
-          .insert(rows)
-          .select();
-        if (error || !data) {
-          console.error(error);
-          return toastAndLog("No se pudieron crear los productos.", "error");
-        }
-
-        // Woo best-effort
-        // B2B UPDATE
-        // Woo best-effort
-        try {
-          await Promise.allSettled([
-            ...data.map((row: any) =>
-              wooCreateProductLocal({
-                skuLocal: row.sku,
-                name: row.name,
-                price: Number(row.price || 0),
-                initialStockWeb: Number(row.stockweb || 0),
-              })
-            ),
-            ...data.map((row: any) =>
-              b2bCreateProductLocal({
-                skuLocal: row.sku,
-                name: row.name,
-                price: Number(row.price || 0),
-                initialStockB2b: Number(row.stockb2b || 0),
-              })
-            ),
-          ]);
-        } catch {
-          /* ignore */
-        }
-
-        toastAndLog(`Creadas ${rows.length} talla(s).`, "sync");
+              }),
+            ])
+          ),
+        ]);
+      } catch {
+        /* ignoramos errores de Woo/B2B */
       }
-    } catch (err) {
-      console.error("Error en saveProduct:", err);
-      toastAndLog("Error en la operación.", "error");
-    } finally {
-      setShowModal(false);
-      setEditingProduct(null);
-      setEditingFamily(null);
-      setIsExistingSKU(false);
-      fetchProducts({ silent: true });
+
+      const msg: string[] = [];
+      if (updates.length) msg.push(`Actualizadas ${updates.length}`);
+      if (creates.length) msg.push(`Creadas ${creates.length}`);
+      toastAndLog(msg.join(" · ") || "Sin cambios", "sync");
+    } else {
+      // ---- MODO CREAR NUEVO PRODUCTO (familia) ----
+      const name = (editingProduct?.name || "").trim();
+      const categoria_id = Number(editingProduct?.categoria_id || 0) || null;
+      const sku = (editingProduct?.sku || "").trim();
+      if (!name || !categoria_id) return toast.error("Completa nombre y categoría.");
+      if (!sku) return toast.error("Ingresa un SKU para la familia.");
+
+      const matrix = editingProduct?.matrix || {};
+      const rows = Object.entries(matrix)
+        .map(([tId, v]: any) => {
+          const b2b = Math.max(0, Number(v?.b2b || 0));
+          const web = Math.max(0, Number(v?.web || 0));
+          const ml = Math.max(0, Number(v?.ml || 0));
+          const total = b2b + web + ml;
+          if (total === 0) return null;
+          const price = Math.max(
+            0,
+            Number(v?.price ?? editingProduct?.basePrice ?? 0)
+          );
+          return {
+            name,
+            sku, // 👈 mismo SKU para toda la familia
+            price,
+            categoria_id,
+            talla_id: Number(tId),
+            stockb2b: b2b,
+            stockweb: web,
+            stockml: ml,
+          };
+        })
+        .filter(Boolean) as any[];
+
+      if (!rows.length)
+        return toast.error("Ingresa stock en al menos una talla.");
+
+      const { data, error } = await supabase
+        .from("productos")
+        .insert(rows)
+        .select();
+      if (error || !data) {
+        console.error(error);
+        return toastAndLog("No se pudieron crear los productos.", "error");
+      }
+
+      // Woo + B2B (best effort)
+      try {
+        await Promise.allSettled([
+          ...data.map((row: any) =>
+            wooCreateProductLocal({
+              skuLocal: row.sku,
+              name: row.name,
+              price: Number(row.price || 0),
+              initialStockWeb: Number(row.stockweb || 0),
+            })
+          ),
+          ...data.map((row: any) =>
+            b2bCreateProductLocal({
+              skuLocal: row.sku,
+              name: row.name,
+              price: Number(row.price || 0),
+              initialStockB2b: Number(row.stockb2b || 0),
+            })
+          ),
+        ]);
+      } catch {
+        /* ignore */
+      }
+
+      toastAndLog(`Creadas ${rows.length} talla(s).`, "sync");
     }
-  };
+  } catch (err) {
+    console.error("Error en saveProduct:", err);
+    toastAndLog("Error en la operación.", "error");
+  } finally {
+    setShowModal(false);
+    setEditingProduct(null);
+    setEditingFamily(null);
+    setIsExistingSKU(false);
+    fetchProducts({ silent: true });
+  }
+};
+
 
   const selectedCatName = useMemo(() => {
     const id = Number(editingProduct?.categoria_id || 0);
@@ -825,6 +851,15 @@ export const StockManager = () => {
       : ch === "Web"
       ? "bg-blue-100 text-blue-700"
       : "bg-amber-100 text-amber-700";
+      // Genera un SKU único basado en nombre y categoría
+const generateSKU = (name: string, categoriaId: number | string) => {
+  if (!name || !categoriaId) return "";
+  const cleanName = name.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const prefix = cleanName.substring(0, 3) || "PRD";
+  const randomPart = Math.random().toString(36).substring(2, 7).toUpperCase();
+  return `${prefix}-${categoriaId}-${randomPart}`;
+};
+
 
   return (
     <div className="space-y-6 transition-colors duration-300">
@@ -1294,12 +1329,15 @@ export const StockManager = () => {
                     <input
                       type="text"
                       value={editingProduct?.name || ""}
-                      onChange={(e) =>
+                      onChange={(e) =>{
+  const newName = e.target.value;
+  const newSku = generateSKU(newName, editingProduct?.categoria_id || "");
                         setEditingProduct({
                           ...editingProduct,
                           name: e.target.value,
+                          sku: newSku,
                         })
-                      }
+                      }}
                       className="w-full border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
                     />
                   </div>
@@ -1309,14 +1347,19 @@ export const StockManager = () => {
                     </label>
                     <select
                       value={editingProduct?.categoria_id ?? ""}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const catValue = e.target.value ? Number(e.target.value) : "";
+  const newSku = generateSKU(editingProduct?.name || "", catValue);
+                        
                         setEditingProduct({
                           ...editingProduct,
                           categoria_id: e.target.value
+                          
                             ? Number(e.target.value)
                             : "",
+                          sku: newSku,  
                         })
-                      }
+                      }}
                       className="w-full border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
                     >
                       <option value="">Seleccionar categoría</option>
@@ -1328,6 +1371,21 @@ export const StockManager = () => {
                     </select>
                   </div>
                 </div>
+<div className="mt-3">
+  <label className="block text-sm text-neutral-700 dark:text-neutral-300 mb-1">
+    SKU (generado automáticamente)
+  </label>
+  <input
+    type="text"
+    readOnly
+    value={editingProduct?.sku || ""}
+    className="border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 w-60 bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-400 font-mono select-all"
+  />
+  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+    Se genera automáticamente según el nombre y la categoría.
+  </p>
+</div>
+
 
                 <div className="mt-3">
                   <label className="block text-sm text-neutral-700 dark:text-neutral-300 mb-1">
