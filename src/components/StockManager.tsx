@@ -593,228 +593,247 @@ export const StockManager = () => {
   const goLast = () => setPage(totalPages);
 
   // ====== Guardar
-  const saveProduct = async () => {
+    const saveProduct = async () => {
+    try {
+      // =========================
+// MODO EDITAR FAMILIA
+// =========================
+if (isExistingSKU && editingFamily) {
+
+  const updates: Array<{
+    id: number;
+    stockb2b: number;
+    stockweb: number;
+    stockml: number;
+    price: number;
+  }> = [];
+
+  const creates: Array<{
+    name: string;
+    sku: string;
+    price: number;
+    categoria_id: number | null;
+    talla_id: number;
+    stockb2b: number;
+    stockweb: number;
+    stockml: number;
+  }> = [];
+
+  // SKU base de la familia
+  const anyProduct = products.find(
+    (p) =>
+      p.name === editingFamily.name &&
+      (p.categoria_id ?? null) === (editingFamily.categoria_id ?? null),
+  );
+  const familySku = anyProduct?.sku || "";
+
+  // Procesar tallas
+  for (const t of editingFamily.cols) {
+    const v = editingFamily.values[t.id];
+    if (!v) continue;
+
+    const b2b = Math.max(0, Number(v.b2b || 0));
+    const web = Math.max(0, Number(v.web || 0));
+    const ml = Math.max(0, Number(v.ml || 0));
+    const price = Math.max(0, Number(v.price ?? editingFamily.basePrice ?? 0));
+
+    if (v.id) {
+      // EXISTIA → SOLO UPDATE
+      updates.push({
+        id: v.id,
+        stockb2b: b2b,
+        stockweb: web,
+        stockml: ml,
+        price,
+      });
+    } else {
+      // NUEVA TALLA → CREAR
+      const total = b2b + web + ml;
+      if (total > 0) {
+        creates.push({
+          name: editingFamily.name,
+          sku: familySku,
+          price,
+          categoria_id: editingFamily.categoria_id ?? null,
+          talla_id: t.id,
+          stockb2b: b2b,
+          stockweb: web,
+          stockml: ml,
+        });
+      }
+    }
+  }
+
+  // UPDATE EN BD
+  if (updates.length) {
+    await Promise.allSettled(
+      updates.map((u) =>
+        supabase
+          .from("productos")
+          .update({
+            stockb2b: u.stockb2b,
+            stockweb: u.stockweb,
+            stockml: u.stockml,
+            price: u.price,
+          })
+          .eq("id", u.id),
+      ),
+    );
+  }
+
+  // INSERT NUEVAS TALLAS
+  if (creates.length) {
+    const { data, error } = await supabase
+      .from("productos")
+      .insert(creates)
+      .select();
+
+    if (error) {
+      console.error(error);
+      toastAndLog("No se pudieron crear algunas tallas.", "error");
+    }
+
+    // 🔥 CREAR EN WOOCOMMERCE LAS NUEVAS tallas (producto simple común)
+    for (const row of creates) {
+      await wooCreateProductLocal({
+        skuLocal: row.sku,
+        name: row.name,
+        price: Number(row.price),
+        initialStockWeb: Number(row.stockweb || 0),
+        categoryIdLocal: row.categoria_id, 
+      });
+    }
+  }
+
+  // UPDATE STOCK TOTAL EN WOO + B2B
   try {
-    if (isExistingSKU && editingFamily) {
-      // ---- MODO EDITAR FAMILIA ----
-      const updates: Array<{
-        id: number;
-        stockb2b: number;
-        stockweb: number;
-        stockml: number;
-        price: number;
-      }> = [];
-      const creates: Array<{
-        name: string;
-        sku: string;
-        price: number;
-        categoria_id: number | null;
-        talla_id: number;
-        stockb2b: number;
-        stockweb: number;
-        stockml: number;
-      }> = [];
+    let totalWeb = 0;
+    let totalB2B = 0;
 
-      for (const t of editingFamily.cols) {
-        const v = editingFamily.values[t.id];
-        if (!v) continue;
+    for (const t of editingFamily.cols) {
+      const v = editingFamily.values[t.id];
+      if (!v) continue;
+      totalWeb += Number(v.web || 0);
+      totalB2B += Number(v.b2b || 0);
+    }
 
-        const b2b = Math.max(0, Number(v.b2b || 0));
-        const web = Math.max(0, Number(v.web || 0));
-        const ml = Math.max(0, Number(v.ml || 0));
-        const price = Math.max(
-          0,
-          Number(v.price ?? editingFamily.basePrice ?? 0)
-        );
+    if (familySku) {
+      await Promise.allSettled([
+        wooUpdateProductLocal({
+          skuLocal: familySku,
+          price: Number(editingFamily.basePrice || 0),
+          absoluteStockWeb: totalWeb,
+        }),
+        b2bUpdateProductLocal({
+          skuLocal: familySku,
+          price: Number(editingFamily.basePrice || 0),
+          absoluteStockB2b: totalB2B,
+        }),
+      ]);
+    }
+  } catch (_) {}
 
-        if (v.id) {
-          updates.push({
-            id: v.id,
-            stockb2b: b2b,
-            stockweb: web,
-            stockml: ml,
-            price,
-          });
-        } else {
-          const total = b2b + web + ml;
-          if (total > 0) {
-            creates.push({
-              name: editingFamily.name,
-              sku: editingFamily.sku || "", // 👈 usa el mismo SKU de la familia
+  toastAndLog("Cambios guardados correctamente.", "sync");
+
+}
+ else {
+        // =========================
+        // MODO CREAR NUEVA FAMILIA
+        // =========================
+        const name = (editingProduct?.name || "").trim();
+        const categoria_id = Number(editingProduct?.categoria_id || 0) || null;
+        const sku = (editingProduct?.sku || "").trim();
+
+        if (!name || !categoria_id)
+          return toast.error("Completa nombre y categoría.");
+        if (!sku) return toast.error("Ingresa un SKU para la familia.");
+
+        const matrix = editingProduct?.matrix || {};
+        const rows = Object.entries(matrix)
+          .map(([tId, v]: any) => {
+            const b2b = Math.max(0, Number(v?.b2b || 0));
+            const web = Math.max(0, Number(v?.web || 0));
+            const ml = Math.max(0, Number(v?.ml || 0));
+            const total = b2b + web + ml;
+            if (total === 0) return null;
+            const price = Math.max(
+              0,
+              Number(v?.price ?? editingProduct?.basePrice ?? 0),
+            );
+            return {
+              name,
+              sku, // mismo SKU para toda la familia
               price,
-              categoria_id: editingFamily.categoria_id ?? null,
-              talla_id: t.id,
+              categoria_id,
+              talla_id: Number(tId),
               stockb2b: b2b,
               stockweb: web,
               stockml: ml,
-            });
-          }
-        }
-      }
+            };
+          })
+          .filter(Boolean) as any[];
 
-      // UPDATE existentes (incluye precio)
-      if (updates.length) {
-        const res = await Promise.allSettled(
-          updates.map((u) =>
-            supabase
-              .from("productos")
-              .update({
-                stockb2b: u.stockb2b,
-                stockweb: u.stockweb,
-                stockml: u.stockml,
-                price: u.price,
-              })
-              .eq("id", u.id)
-          )
-        );
-        const failed = res.filter(
-          (r) => r.status === "rejected" || (r as any).value?.error
-        ).length;
-        if (failed)
-          toastAndLog("Algunas tallas no pudieron actualizarse.", "error");
-      }
+        if (!rows.length)
+          return toast.error("Ingresa stock en al menos una talla.");
 
-      // INSERT nuevos (todas comparten el mismo SKU)
-      let createdRows: any[] = [];
-      if (creates.length) {
         const { data, error } = await supabase
           .from("productos")
-          .insert(creates)
+          .insert(rows)
           .select();
-        if (error) {
+        if (error || !data) {
           console.error(error);
-          toastAndLog("No se pudieron crear algunas tallas.", "error");
-        } else createdRows = data || [];
-      }
+          return toastAndLog("No se pudieron crear los productos.", "error");
+        }
 
-      // Woo + B2B sync
-      try {
-        await Promise.allSettled([
-          // actualizaciones
-          ...updates.map((u) => {
-            const p = products.find((pp) => pp.id === u.id);
-            if (!p?.sku) return Promise.resolve();
-            return Promise.allSettled([
-              wooUpdateProductLocal({
-                skuLocal: String(p.sku),
-                price: Number(u.price),
-                absoluteStockWeb: Number(u.stockweb),
-              }),
-              b2bUpdateProductLocal({
-                skuLocal: String(p.sku),
-                price: Number(u.price),
-                absoluteStockB2b: Number(u.stockb2b),
-              }),
-            ]);
-          }),
-          // nuevas
-          ...createdRows.map((row) =>
-            Promise.allSettled([
-              wooCreateProductLocal({
-                skuLocal: row.sku,
-                name: row.name,
-                price: Number(row.price),
-                initialStockWeb: Number(row.stockweb || 0),
-              }),
-              b2bCreateProductLocal({
-                skuLocal: row.sku,
-                name: row.name,
-                price: Number(row.price),
-                initialStockB2b: Number(row.stockb2b || 0),
-              }),
-            ])
-          ),
-        ]);
-      } catch {
-        /* ignoramos errores de Woo/B2B */
-      }
-
-      const msg: string[] = [];
-      if (updates.length) msg.push(`Actualizadas ${updates.length}`);
-      if (creates.length) msg.push(`Creadas ${creates.length}`);
-      toastAndLog(msg.join(" · ") || "Sin cambios", "sync");
-    } else {
-      // ---- MODO CREAR NUEVO PRODUCTO (familia) ----
-      const name = (editingProduct?.name || "").trim();
-      const categoria_id = Number(editingProduct?.categoria_id || 0) || null;
-      const sku = (editingProduct?.sku || "").trim();
-      if (!name || !categoria_id) return toast.error("Completa nombre y categoría.");
-      if (!sku) return toast.error("Ingresa un SKU para la familia.");
-
-      const matrix = editingProduct?.matrix || {};
-      const rows = Object.entries(matrix)
-        .map(([tId, v]: any) => {
-          const b2b = Math.max(0, Number(v?.b2b || 0));
-          const web = Math.max(0, Number(v?.web || 0));
-          const ml = Math.max(0, Number(v?.ml || 0));
-          const total = b2b + web + ml;
-          if (total === 0) return null;
-          const price = Math.max(
+        // === Woo + B2B: UN SOLO CREATE POR FAMILIA ===
+        try {
+          const totalWeb = data.reduce(
+            (acc: number, row: any) => acc + Number(row.stockweb || 0),
             0,
-            Number(v?.price ?? editingProduct?.basePrice ?? 0)
           );
-          return {
-            name,
-            sku, // 👈 mismo SKU para toda la familia
-            price,
-            categoria_id,
-            talla_id: Number(tId),
-            stockb2b: b2b,
-            stockweb: web,
-            stockml: ml,
-          };
-        })
-        .filter(Boolean) as any[];
+          const totalB2B = data.reduce(
+            (acc: number, row: any) => acc + Number(row.stockb2b || 0),
+            0,
+          );
+          const priceForWoo = Number(data[0]?.price || 0);
+          const catName =
+            categoria_id && catById[categoria_id]
+              ? catById[categoria_id]
+              : undefined;
 
-      if (!rows.length)
-        return toast.error("Ingresa stock en al menos una talla.");
-
-      const { data, error } = await supabase
-        .from("productos")
-        .insert(rows)
-        .select();
-      if (error || !data) {
-        console.error(error);
-        return toastAndLog("No se pudieron crear los productos.", "error");
-      }
-
-      // Woo + B2B (best effort)
-      try {
-        await Promise.allSettled([
-          ...data.map((row: any) =>
+          await Promise.allSettled([
             wooCreateProductLocal({
-              skuLocal: row.sku,
-              name: row.name,
-              price: Number(row.price || 0),
-              initialStockWeb: Number(row.stockweb || 0),
-            })
-          ),
-          ...data.map((row: any) =>
+              skuLocal: sku,
+              name,
+              price: priceForWoo,
+              initialStockWeb: totalWeb,
+              categoryIdLocal: categoria_id,
+            }),
             b2bCreateProductLocal({
-              skuLocal: row.sku,
-              name: row.name,
-              price: Number(row.price || 0),
-              initialStockB2b: Number(row.stockb2b || 0),
-            })
-          ),
-        ]);
-      } catch {
-        /* ignore */
-      }
+              skuLocal: sku,
+              name,
+              price: priceForWoo,
+              initialStockB2b: totalB2B,
+            }),
+          ]);
+        } catch {
+          // best-effort
+        }
 
-      toastAndLog(`Creadas ${rows.length} talla(s).`, "sync");
+        toastAndLog(`Creadas ${rows.length} talla(s).`, "sync");
+      }
+    } catch (err) {
+      console.error("Error en saveProduct:", err);
+      toastAndLog("Error en la operación.", "error");
+    } finally {
+      setShowModal(false);
+      setEditingProduct(null);
+      setEditingFamily(null);
+      setIsExistingSKU(false);
+      fetchProducts({ silent: true });
     }
-  } catch (err) {
-    console.error("Error en saveProduct:", err);
-    toastAndLog("Error en la operación.", "error");
-  } finally {
-    setShowModal(false);
-    setEditingProduct(null);
-    setEditingFamily(null);
-    setIsExistingSKU(false);
-    fetchProducts({ silent: true });
-  }
-};
+  };
+
 
 
   const selectedCatName = useMemo(() => {
