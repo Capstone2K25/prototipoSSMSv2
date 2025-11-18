@@ -139,10 +139,10 @@ const FamCard = ({
                   const skus = items.map((p) => String(p.sku));
 
                   // Eliminamos en Woo + B2B
-                  await Promise.allSettled([
-                    ...skus.map((s) => wooDeleteProductLocal(s)),
-                    ...skus.map((s) => b2bDeleteProductLocal(s)),
-                  ]);
+                  // await Promise.allSettled([
+                  //   ...skus.map((s) => wooDeleteProductLocal(s)),
+                  //   ...skus.map((s) => b2bDeleteProductLocal(s)),
+                  // ]);
 
                   // Eliminamos en BD
                   const { error } = await supabase
@@ -468,12 +468,12 @@ export const StockManager = () => {
     const skus = selectedProducts.map((p) => String(p.sku));
 
     // B2B UPDATE
-    const results = await Promise.allSettled([
-      ...skus.map((sku) => wooDeleteProductLocal(sku)),
-      ...skus.map((sku) => b2bDeleteProductLocal(sku)), // <-- AÑADIDO
-    ]);
-    const okWoo = results.filter((r) => r.status === "fulfilled").length;
-    const failWoo = results.length - okWoo;
+    // const results = await Promise.allSettled([
+    //   ...skus.map((sku) => wooDeleteProductLocal(sku)),
+    //   ...skus.map((sku) => b2bDeleteProductLocal(sku)), // <-- AÑADIDO
+    // ]);
+    // const okWoo = results.filter((r) => r.status === "fulfilled").length;
+    // const failWoo = results.length - okWoo;
 
     const { error } = await supabase
       .from("productos")
@@ -495,9 +495,9 @@ export const StockManager = () => {
         channel: "stock",
       })
     );
-    toast.success(
-      `Eliminados ${selectedIds.length} en BD. Woo: ${okWoo} ok / ${failWoo} fallo(s).`
-    );
+    // toast.success(
+    //   `Eliminados ${selectedIds.length} en BD. Woo: ${okWoo} ok / ${failWoo} fallo(s).`
+    // );
 
     setSelectedIds([]);
     fetchProducts({ silent: true });
@@ -694,44 +694,44 @@ if (isExistingSKU && editingFamily) {
     }
 
     // 🔥 CREAR EN WOOCOMMERCE LAS NUEVAS tallas (producto simple común)
-    for (const row of creates) {
-      await wooCreateProductLocal({
-        skuLocal: row.sku,
-        name: row.name,
-        price: Number(row.price),
-        initialStockWeb: Number(row.stockweb || 0),
-        categoryIdLocal: row.categoria_id, 
-      });
-    }
+    // for (const row of creates) {
+    //   await wooCreateProductLocal({
+    //     skuLocal: row.sku,
+    //     name: row.name,
+    //     price: Number(row.price),
+    //     initialStockWeb: Number(row.stockweb || 0),
+    //     categoryIdLocal: row.categoria_id, 
+    //   });
+    // }
   }
 
   // UPDATE STOCK TOTAL EN WOO + B2B
-  try {
-    let totalWeb = 0;
-    let totalB2B = 0;
+  // try {
+  //   let totalWeb = 0;
+  //   let totalB2B = 0;
 
-    for (const t of editingFamily.cols) {
-      const v = editingFamily.values[t.id];
-      if (!v) continue;
-      totalWeb += Number(v.web || 0);
-      totalB2B += Number(v.b2b || 0);
-    }
+  //   for (const t of editingFamily.cols) {
+  //     const v = editingFamily.values[t.id];
+  //     if (!v) continue;
+  //     totalWeb += Number(v.web || 0);
+  //     totalB2B += Number(v.b2b || 0);
+  //   }
 
-    if (familySku) {
-      await Promise.allSettled([
-        wooUpdateProductLocal({
-          skuLocal: familySku,
-          price: Number(editingFamily.basePrice || 0),
-          absoluteStockWeb: totalWeb,
-        }),
-        b2bUpdateProductLocal({
-          skuLocal: familySku,
-          price: Number(editingFamily.basePrice || 0),
-          absoluteStockB2b: totalB2B,
-        }),
-      ]);
-    }
-  } catch (_) {}
+  //   if (familySku) {
+  //     await Promise.allSettled([
+  //       wooUpdateProductLocal({
+  //         skuLocal: familySku,
+  //         price: Number(editingFamily.basePrice || 0),
+  //         absoluteStockWeb: totalWeb,
+  //       }),
+  //       b2bUpdateProductLocal({
+  //         skuLocal: familySku,
+  //         price: Number(editingFamily.basePrice || 0),
+  //         absoluteStockB2b: totalB2B,
+  //       }),
+  //     ]);
+  //   }
+  // } catch (_) {}
 
   toastAndLog("Cambios guardados correctamente.", "sync");
 
@@ -786,39 +786,39 @@ if (isExistingSKU && editingFamily) {
         }
 
         // === Woo + B2B: UN SOLO CREATE POR FAMILIA ===
-        try {
-          const totalWeb = data.reduce(
-            (acc: number, row: any) => acc + Number(row.stockweb || 0),
-            0,
-          );
-          const totalB2B = data.reduce(
-            (acc: number, row: any) => acc + Number(row.stockb2b || 0),
-            0,
-          );
-          const priceForWoo = Number(data[0]?.price || 0);
-          const catName =
-            categoria_id && catById[categoria_id]
-              ? catById[categoria_id]
-              : undefined;
+        // try {
+        //   const totalWeb = data.reduce(
+        //     (acc: number, row: any) => acc + Number(row.stockweb || 0),
+        //     0,
+        //   );
+        //   const totalB2B = data.reduce(
+        //     (acc: number, row: any) => acc + Number(row.stockb2b || 0),
+        //     0,
+        //   );
+        //   const priceForWoo = Number(data[0]?.price || 0);
+        //   const catName =
+        //     categoria_id && catById[categoria_id]
+        //       ? catById[categoria_id]
+        //       : undefined;
 
-          await Promise.allSettled([
-            wooCreateProductLocal({
-              skuLocal: sku,
-              name,
-              price: priceForWoo,
-              initialStockWeb: totalWeb,
-              categoryIdLocal: categoria_id,
-            }),
-            b2bCreateProductLocal({
-              skuLocal: sku,
-              name,
-              price: priceForWoo,
-              initialStockB2b: totalB2B,
-            }),
-          ]);
-        } catch {
-          // best-effort
-        }
+        //   await Promise.allSettled([
+        //     wooCreateProductLocal({
+        //       skuLocal: sku,
+        //       name,
+        //       price: priceForWoo,
+        //       initialStockWeb: totalWeb,
+        //       categoryIdLocal: categoria_id,
+        //     }),
+        //     b2bCreateProductLocal({
+        //       skuLocal: sku,
+        //       name,
+        //       price: priceForWoo,
+        //       initialStockB2b: totalB2B,
+        //     }),
+        //   ]);
+        // } catch {
+        //   // best-effort
+        // }
 
         toastAndLog(`Creadas ${rows.length} talla(s).`, "sync");
       }
