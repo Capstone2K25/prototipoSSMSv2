@@ -803,36 +803,436 @@ export const Admin = ({ user }: AdminProps) => {
       </div>
     </div>
 
-    {/* MODALES */}
-    {modalOpen && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-        <div className="w-full max-w-5xl bg-white dark:bg-neutral-900 rounded-2xl shadow-xl overflow-hidden transition-colors">
-          {/* Header modal */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200 dark:border-neutral-700">
-            <div className="flex items-center gap-3">
-              <Users />
-              <h3 className="text-lg font-semibold text-neutral-900 dark:text-white">
-                Gestión de usuarios
-              </h3>
+    {/* ---------- MODAL DE GESTIÓN DE USUARIOS ---------- */}
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+          <div className="w-full max-w-5xl bg-white rounded-2xl shadow-xl overflow-hidden">
+            {/* Header modal */}
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <div className="flex items-center gap-3">
+                <Users />
+                <h3 className="text-lg font-semibold">Gestión de usuarios</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setModalOpen(false);
+                  setShowForm(false);
+                }}
+                className="p-1 rounded hover:bg-neutral-100"
+              >
+                <X size={18} />
+              </button>
             </div>
-            <button
-              onClick={() => {
-                setModalOpen(false);
-                setShowForm(false);
-              }}
-              className="p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800"
-            >
-              <X size={18} />
-            </button>
-          </div>
 
-          {/* ... resto del modal igual, pero agregá:
-                - dark:bg-neutral-800 en inputs
-                - dark:text-neutral-300 en textos secundarios
-                - dark:border-neutral-700 en bordes
-          */}
+            {/* Contenido */}
+            <div
+              className={`grid gap-6 p-6 ${
+                showForm ? "grid-cols-1 lg:grid-cols-3" : "grid-cols-1"
+              }`}
+            >
+              {/* Tabla */}
+              <div className={showForm ? "lg:col-span-2" : "lg:col-span-3"}>
+                {/* Búsqueda + acciones */}
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <div className="relative flex-1 min-w-[220px]">
+                    <span className="absolute left-3 top-2.5 text-neutral-400">
+                      <Search size={18} />
+                    </span>
+                    <input
+                      className="w-full border rounded-xl pl-9 pr-3 py-2"
+                      placeholder="Buscar por usuario, nombre, email o rol…"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && onSearch()}
+                    />
+                  </div>
+
+                  <button
+                    onClick={onSearch}
+                    className="px-3 py-2 border rounded-xl hover:bg-neutral-50"
+                  >
+                    Buscar
+                  </button>
+                  <button
+                    onClick={() => loadUsers(page)}
+                    className="px-3 py-2 border rounded-xl hover:bg-neutral-50"
+                  >
+                    Refrescar
+                  </button>
+                  <button
+                    onClick={startCreate}
+                    className="px-3 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 inline-flex items-center gap-1"
+                  >
+                    <Plus size={16} />
+                    Nuevo
+                  </button>
+
+                  <div className="ml-auto flex items-center gap-2">
+                    <label className="text-sm text-neutral-600">
+                      Por página
+                    </label>
+                    <select
+                      className="border rounded-xl py-2 px-2"
+                      value={pageSize}
+                      onChange={(e) => {
+                        const ps = Number(e.target.value);
+                        setPageSize(ps);
+                        setPage(1);
+                        void loadUsers(1, search, ps);
+                      }}
+                    >
+                      <option value={5}>5</option>
+                      <option value={10}>10</option>
+                      <option value={20}>20</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Tabla */}
+                <div className="overflow-auto border rounded-xl">
+                  <table className="w-full text-sm">
+                    <thead className="bg-neutral-50">
+                      <tr className="text-left">
+                        <th className="px-3 py-2">Usuario</th>
+                        <th className="px-3 py-2">Nombre</th>
+                        <th className="px-3 py-2">Email</th>
+                        <th className="px-3 py-2">Rol</th>
+                        <th className="px-3 py-2 text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loadingUsers && (
+                        <tr>
+                          <td
+                            className="px-3 py-3 text-neutral-500"
+                            colSpan={5}
+                          >
+                            Cargando…
+                          </td>
+                        </tr>
+                      )}
+                      {errorUsers && !loadingUsers && (
+                        <tr>
+                          <td className="px-3 py-3 text-red-600" colSpan={5}>
+                            {errorUsers}
+                          </td>
+                        </tr>
+                      )}
+                      {!loadingUsers && !errorUsers && users.length === 0 && (
+                        <tr>
+                          <td
+                            className="px-3 py-3 text-neutral-500"
+                            colSpan={5}
+                          >
+                            Sin resultados.
+                          </td>
+                        </tr>
+                      )}
+                      {users.map((u) => (
+                        <tr key={u.id} className="border-t">
+                          <td className="px-3 py-2 font-medium">
+                            {u.username}
+                          </td>
+                          <td className="px-3 py-2">{u.full_name || "-"}</td>
+                          <td className="px-3 py-2">{u.email || "-"}</td>
+                          <td className="px-3 py-2">
+                            <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs">
+                              {u.role}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-2 justify-end">
+                              <button
+                                onClick={() => startEdit(u)}
+                                className="px-2 py-1 rounded-lg border hover:bg-neutral-50 inline-flex items-center gap-1"
+                              >
+                                <Pencil size={16} />
+                                Editar
+                              </button>
+                              <button
+                                onClick={() => handleDelete(u)}
+                                className="px-2 py-1 rounded-lg border hover:bg-red-50 text-red-600 inline-flex items-center gap-1"
+                              >
+                                <Trash2 size={16} />
+                                Eliminar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Paginación */}
+                <div className="flex flex-wrap items-center gap-3 justify-between mt-3">
+                  <div className="text-sm text-neutral-600">
+                    {showingFrom}-{showingTo} de {totalCount}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => page > 1 && loadUsers(page - 1)}
+                      disabled={page <= 1 || loadingUsers}
+                      className="inline-flex items-center gap-1 px-3 py-2 border rounded-xl disabled:opacity-50"
+                    >
+                      <ChevronLeft size={16} /> Anterior
+                    </button>
+                    <span className="text-sm">
+                      Página {page} de {totalPages}
+                    </span>
+                    <button
+                      onClick={() => page < totalPages && loadUsers(page + 1)}
+                      disabled={page >= totalPages || loadingUsers}
+                      className="inline-flex items-center gap-1 px-3 py-2 border rounded-xl disabled:opacity-50"
+                    >
+                      Siguiente <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Panel de formulario */}
+              {showForm && (
+                <div className="lg:col-span-1">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-semibold">
+                      {editingId ? "Editar usuario" : "Nuevo usuario"}
+                    </h4>
+                    <button
+                      onClick={closeForm}
+                      className="px-3 py-2 rounded-lg border hover:bg-neutral-50"
+                    >
+                      Cerrar
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    <input
+                      className="w-full border rounded-xl p-3"
+                      placeholder="Usuario"
+                      value={form.username}
+                      onChange={(e) =>
+                        setForm((s) => ({ ...s, username: e.target.value }))
+                      }
+                      pattern="[A-Za-z0-9._-]{3,32}"
+                      title="3–32 caracteres. Letras, números, punto, guion y guion bajo."
+                    />
+                    <input
+                      className="w-full border rounded-xl p-3"
+                      type="password"
+                      placeholder={
+                        editingId ? "Nueva contraseña (opcional)" : "Contraseña"
+                      }
+                      value={form.password || ""}
+                      onChange={(e) =>
+                        setForm((s) => ({ ...s, password: e.target.value }))
+                      }
+                    />
+                    {(form.password ?? "").length > 0 &&
+                      (() => {
+                        const s = assessPassword(form.password || "");
+                        return (
+                          <div className="space-y-1">
+                            <div className="flex gap-1">
+                              {[0, 1, 2, 3].map((i) => (
+                                <div
+                                  key={i}
+                                  className={`h-2 flex-1 rounded ${
+                                    i <= s.score - 1
+                                      ? strengthColor(s.score)
+                                      : "bg-neutral-200"
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-neutral-600">
+                                Seguridad: <strong>{s.label}</strong>
+                              </span>
+                              <span className="text-neutral-400">
+                                {(form.password || "").length} caracteres
+                              </span>
+                            </div>
+                            {s.score < 3 && (
+                              <ul className="text-xs text-neutral-500 list-disc pl-5 space-y-0.5">
+                                {s.tips.slice(0, 2).map((t, idx) => (
+                                  <li key={idx}>{t}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                    <input
+                      className="w-full border rounded-xl p-3"
+                      placeholder="Nombre completo (opcional)"
+                      value={form.full_name || ""}
+                      onChange={(e) =>
+                        setForm((s) => ({ ...s, full_name: e.target.value }))
+                      }
+                    />
+                    <input
+                      className="w-full border rounded-xl p-3"
+                      type="email"
+                      placeholder="Email (opcional)"
+                      value={form.email || ""}
+                      onChange={(e) =>
+                        setForm((s) => ({ ...s, email: e.target.value }))
+                      }
+                    />
+                    <select
+                      className="w-full border rounded-xl p-3"
+                      value={form.role}
+                      onChange={(e) =>
+                        setForm((s) => ({ ...s, role: e.target.value as Role }))
+                      }
+                    >
+                      <option value="viewer">Viewer</option>
+                      <option value="manager">Manager</option>
+                      <option value="admin">Admin</option>
+                    </select>
+
+                    {formError && (
+                      <p className="text-sm text-red-600">{formError}</p>
+                    )}
+
+                    <div className="flex gap-2">
+                      {(() => {
+                        const s = assessPassword(form.password || "");
+                        const tooWeak = !editingId && s.score < 2;
+                        return (
+                          <button
+                            onClick={handleSave}
+                            disabled={saving || tooWeak}
+                            className={`flex-1 py-2 rounded-lg font-semibold transition-colors ${
+                              saving
+                                ? "bg-neutral-400 text-white"
+                                : tooWeak
+                                ? "bg-neutral-400 text-white cursor-not-allowed"
+                                : "bg-blue-600 text-white hover:bg-blue-700"
+                            }`}
+                          >
+                            {saving
+                              ? "Guardando…"
+                              : editingId
+                              ? "Guardar cambios"
+                              : tooWeak
+                              ? "Contraseña débil"
+                              : "Crear usuario"}
+                          </button>
+                        );
+                      })()}
+
+                      <button
+                        onClick={() => {
+                          if (editingId) {
+                            const original = users.find(
+                              (u) => u.id === editingId
+                            );
+                            if (original) startEdit(original);
+                          } else {
+                            setForm({ ...emptyForm });
+                          }
+                          setFormError(null);
+                        }}
+                        className="px-4 py-2 rounded-lg border hover:bg-neutral-50"
+                      >
+                        Limpiar
+                      </button>
+                    </div>
+
+                    <p className="text-xs text-neutral-500">
+                      * Más adelante migraremos a contraseñas hasheadas
+                      (bcrypt).
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ---------- MODAL ML CREDENTIALS ---------- */}
+      {mlModalOpen && (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <div className="flex items-center gap-2">
+                <KeyRound />
+                <h3 className="font-semibold">
+                  Editar credenciales Mercado Libre
+                </h3>
+              </div>
+              <button
+                onClick={() => setMlModalOpen(false)}
+                className="p-1 rounded hover:bg-neutral-100"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-3">
+              <label className="block text-sm text-neutral-600">
+                Access Token
+              </label>
+              <input
+                className="w-full border rounded-xl p-3"
+                value={mlForm.access_token}
+                onChange={(e) =>
+                  setMlForm((s) => ({ ...s, access_token: e.target.value }))
+                }
+                placeholder="APP_USR-..."
+              />
+
+              <label className="block text-sm text-neutral-600">
+                Refresh Token
+              </label>
+              <input
+                className="w-full border rounded-xl p-3"
+                value={mlForm.refresh_token}
+                onChange={(e) =>
+                  setMlForm((s) => ({ ...s, refresh_token: e.target.value }))
+                }
+                placeholder="TG-..."
+              />
+
+              <label className="block text-sm text-neutral-600">
+                Expira en (ISO o epoch)
+              </label>
+              <input
+                className="w-full border rounded-xl p-3"
+                value={mlForm.expires_at}
+                onChange={(e) =>
+                  setMlForm((s) => ({ ...s, expires_at: e.target.value }))
+                }
+                placeholder="2025-12-31T23:59:59.000Z o 1735603199"
+              />
+
+              <div className="pt-2 flex items-center gap-2">
+                <button
+                  onClick={saveMlCreds}
+                  disabled={mlSaving}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-semibold disabled:opacity-50"
+                >
+                  {mlSaving ? "Guardando…" : "Guardar credenciales"}
+                </button>
+                <button
+                  onClick={() => setMlModalOpen(false)}
+                  className="px-4 py-2 rounded-lg border hover:bg-neutral-50"
+                >
+                  Cancelar
+                </button>
+              </div>
+
+              <p className="text-xs text-neutral-500">
+                Consejo: si pegas un epoch (segundos/milisegundos) lo convierto
+                automáticamente a ISO.
+              </p>
+            </div>
+          </div>
+        </div>
     )}
   </div>
 );
