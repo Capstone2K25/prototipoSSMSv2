@@ -29,7 +29,7 @@ import {
 type LookupCat = { id: number; name: string };
 type LookupTal = {
   id: number;
-  tipo: "alfanumerica" | "numerica";
+  tipo: "alfanumerica" | "numerica" | "unica";
   etiqueta: string;
   orden: number | null;
 };
@@ -53,29 +53,46 @@ type FamKey = string; // `${name}::${categoria_id}::${tipo}`
 type FamRow = {
   name: string;
   categoria_id: number | null;
-  tipo: "alfanumerica" | "numerica";
+  tipo: "alfanumerica" | "numerica" | "unica";
   byTalla: Record<number, Product>; // talla_id -> producto
 };
 
 type EditFamilyState = {
   name: string;
-  basePrice: number; // ✅ precio base para tallas nuevas
   categoria_id: number | null;
-  tipo: "alfanumerica" | "numerica";
-  cols: LookupTal[]; // columnas (tallas)
+  tipo: "numerica" | "alfanumerica" | "unica";
+
+  // SKU de la familia (para nuevas tallas)
+  sku: string;
+
+  cols: {
+    id: number;
+    etiqueta: string;
+    tipo: string;
+    orden: number | null;
+  }[];
+
   values: Record<
     number,
     {
-      id?: number; // id de producto si existe (para updates)
+      id?: number;
       b2b: number;
       web: number;
       ml: number;
-      price?: number; // ✅ precio por talla
+      price: number;
     }
   >;
+
+  // precios por canal (misma familia)
+  priceb2b: number;
+  priceweb: number;
+  priceml: number;
+
+  // fallback cuando se crean tallas nuevas
+  basePrice: number;
 };
 
-const ALFA_ORDER = ["XS", "S", "M", "L", "XL", "XXL", "3XL"];
+const ALFA_ORDER = ["XS", "S", "M", "L", "XL", "2XL", "3XL"];
 const FamCard = ({
   fam,
   cols,
@@ -96,160 +113,159 @@ const FamCard = ({
   const [deleting, setDeleting] = useState(false);
 
   return (
-  <div className="bg-white rounded-2xl shadow-sm hover:shadow-md border border-neutral-200 overflow-hidden transition flex flex-col">
-    {/* Header */}
-    <div className="p-4 flex flex-col gap-1">
-      <div className="flex items-center justify-between">
-        <div>
-          <h4 className="font-semibold text-neutral-900">{fam.name}</h4>
-          <p className="text-xs text-neutral-500">
-            {fam.categoria_id ? catById[fam.categoria_id] : "Sin categoría"} ·{" "}
-            {fam.tipo === "numerica" ? "Numérica" : "Alfanumérica"}
-          </p>
-        </div>
-        <div className="text-right">
-          <div className="text-sm font-bold text-neutral-800">
-            {totalFam} unidades
+    <div className="bg-white rounded-2xl shadow-sm hover:shadow-md border border-neutral-200 overflow-hidden transition flex flex-col">
+      {/* Header */}
+      <div className="p-4 flex flex-col gap-1">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="font-semibold text-neutral-900">{fam.name}</h4>
+            <p className="text-xs text-neutral-500">
+              {fam.categoria_id ? catById[fam.categoria_id] : "Sin categoría"} ·{" "}
+              {fam.tipo === "numerica" ? "Numérica" : "Alfanumérica"}
+            </p>
           </div>
-          <div className="flex gap-3 mt-2 justify-end">
-            {/* Editar */}
-            <button
-              onClick={() => openEditFamily(fam)}
-              disabled={deleting}
-              className="text-blue-600 hover:text-blue-800 text-xs font-semibold flex items-center gap-1"
-            >
-              <Pencil size={14} /> Editar
-            </button>
-
-            {/* Eliminar */}
-            <button
-              onClick={async () => {
-                if (
-                  !confirm(
-                    `¿Eliminar "${fam.name}" y todas sus tallas? Esta acción no se puede deshacer.`
-                  )
-                )
-                  return;
-
-                try {
-                  setDeleting(true);
-
-                  const items = Object.values(fam.byTalla);
-                  const ids = items.map((p) => p.id);
-                  const skus = items.map((p) => String(p.sku));
-
-                  // Eliminamos en Woo + B2B
-                  // await Promise.allSettled([
-                  //   ...skus.map((s) => wooDeleteProductLocal(s)),
-                  //   ...skus.map((s) => b2bDeleteProductLocal(s)),
-                  // ]);
-
-                  // Eliminamos en BD
-                  const { error } = await supabase
-                    .from("productos")
-                    .delete()
-                    .in("id", ids);
-                  if (error) {
-                    console.error(error);
-                    toast.error("No se pudo eliminar el producto.");
-                    return;
-                  }
-
-                  toast.success(
-                    `Producto "${fam.name}" eliminado (${ids.length} talla(s)).`
-                  );
-
-                  // Recarga datos o página
-                  location.reload();
-                } catch (err) {
-                  console.error(err);
-                  toast.error("Error al eliminar el producto.");
-                } finally {
-                  setDeleting(false);
-                }
-              }}
-              disabled={deleting}
-              className={`text-xs font-semibold flex items-center gap-1 ${
-                deleting
-                  ? "text-neutral-400 cursor-not-allowed"
-                  : "text-red-600 hover:text-red-800"
-              }`}
-            >
-              {deleting ? (
-                <>
-                  <span className="animate-spin border-2 border-red-600 border-t-transparent rounded-full w-3 h-3"></span>
-                  <span>Eliminando…</span>
-                </>
-              ) : (
-                <>
-                  <Trash2 size={14} /> Eliminar
-                </>
-              )}
-            </button>
-
-            {/* Expandir / colapsar */}
-            <button
-              onClick={toggle}
-              disabled={deleting}
-              className="text-neutral-600 hover:text-neutral-800 text-xs font-semibold flex items-center gap-1"
-            >
-              {isOpen ? "Ocultar" : "Ver"} <span>{isOpen ? "˄" : "˅"}</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    {/* Expandible */}
-    {isOpen && (
-      <div className="px-4 pb-4 border-t border-neutral-100 text-xs overflow-x-auto">
-        <div className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr,0.7fr,1fr] gap-2 py-2 font-semibold text-[11px] text-neutral-500">
-          <div>Talla</div>
-          <div className="text-center">B2B</div>
-          <div className="text-center">Web</div>
-          <div className="text-center">ML</div>
-          <div className="text-center">Total</div>
-          <div className="text-center">Precio</div>
-        </div>
-
-        {cols.map((t: any) => {
-          const p = fam.byTalla[t.id];
-          if (!p) return null;
-          const total =
-            (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0);
-          const cls = getStockStatusClass(total);
-
-          return (
-            <div
-              key={t.id}
-              className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr,0.7fr,1fr] gap-2 items-center py-1.5 rounded-md hover:bg-neutral-50"
-            >
-              <div className="font-semibold text-neutral-800">
-                {t.etiqueta}
-              </div>
-              <div className="text-center text-[11px] font-semibold text-fuchsia-700">
-                {p.stockb2b}
-              </div>
-              <div className="text-center text-[11px] font-semibold text-blue-700">
-                {p.stockweb}
-              </div>
-              <div className="text-center text-[11px] font-semibold text-amber-700">
-                {p.stockml}
-              </div>
-              <div className={`text-center text-[11px] font-semibold ${cls}`}>
-                {total}
-              </div>
-              <div className="text-center text-[11px] text-neutral-600">
-                {p.price ? formatPrice(p.price) : "—"}
-              </div>
+          <div className="text-right">
+            <div className="text-sm font-bold text-neutral-800">
+              {totalFam} unidades
             </div>
-          );
-        })}
-      </div>
-    )}
-  </div>
-);
+            <div className="flex gap-3 mt-2 justify-end">
+              {/* Editar */}
+              <button
+                onClick={() => openEditFamily(fam)}
+                disabled={deleting}
+                className="text-blue-600 hover:text-blue-800 text-xs font-semibold flex items-center gap-1"
+              >
+                <Pencil size={14} /> Editar
+              </button>
 
+              {/* Eliminar */}
+              <button
+                onClick={async () => {
+                  if (
+                    !confirm(
+                      `¿Eliminar "${fam.name}" y todas sus tallas? Esta acción no se puede deshacer.`
+                    )
+                  )
+                    return;
+
+                  try {
+                    setDeleting(true);
+
+                    const items = Object.values(fam.byTalla);
+                    const ids = items.map((p) => p.id);
+                    const skus = items.map((p) => String(p.sku));
+
+                    // Eliminamos en Woo + B2B
+                    await Promise.allSettled([
+                      ...skus.map((s) => wooDeleteProductLocal(s)),
+                      ...skus.map((s) => b2bDeleteProductLocal(s)),
+                    ]);
+
+                    // Eliminamos en BD
+                    const { error } = await supabase
+                      .from("productos")
+                      .delete()
+                      .in("id", ids);
+                    if (error) {
+                      console.error(error);
+                      toast.error("No se pudo eliminar el producto.");
+                      return;
+                    }
+
+                    toast.success(
+                      `Producto "${fam.name}" eliminado (${ids.length} talla(s)).`
+                    );
+
+                    // Recarga datos o página
+                    location.reload();
+                  } catch (err) {
+                    console.error(err);
+                    toast.error("Error al eliminar el producto.");
+                  } finally {
+                    setDeleting(false);
+                  }
+                }}
+                disabled={deleting}
+                className={`text-xs font-semibold flex items-center gap-1 ${
+                  deleting
+                    ? "text-neutral-400 cursor-not-allowed"
+                    : "text-red-600 hover:text-red-800"
+                }`}
+              >
+                {deleting ? (
+                  <>
+                    <span className="animate-spin border-2 border-red-600 border-t-transparent rounded-full w-3 h-3"></span>
+                    <span>Eliminando…</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} /> Eliminar
+                  </>
+                )}
+              </button>
+
+              {/* Expandir / colapsar */}
+              <button
+                onClick={toggle}
+                disabled={deleting}
+                className="text-neutral-600 hover:text-neutral-800 text-xs font-semibold flex items-center gap-1"
+              >
+                {isOpen ? "Ocultar" : "Ver"} <span>{isOpen ? "˄" : "˅"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Expandible */}
+      {isOpen && (
+        <div className="px-4 pb-4 border-t border-neutral-100 text-xs overflow-x-auto">
+          <div className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr,0.7fr,1fr] gap-2 py-2 font-semibold text-[11px] text-neutral-500">
+            <div>Talla</div>
+            <div className="text-center">B2B</div>
+            <div className="text-center">Web</div>
+            <div className="text-center">ML</div>
+            <div className="text-center">Total</div>
+            <div className="text-center">Precio</div>
+          </div>
+
+          {cols.map((t: any) => {
+            const p = fam.byTalla[t.id];
+            if (!p) return null;
+            const total =
+              (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0);
+            const cls = getStockStatusClass(total);
+
+            return (
+              <div
+                key={t.id}
+                className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr,0.7fr,1fr] gap-2 items-center py-1.5 rounded-md hover:bg-neutral-50"
+              >
+                <div className="font-semibold text-neutral-800">
+                  {t.etiqueta}
+                </div>
+                <div className="text-center text-[11px] font-semibold text-fuchsia-700">
+                  {p.stockb2b}
+                </div>
+                <div className="text-center text-[11px] font-semibold text-blue-700">
+                  {p.stockweb}
+                </div>
+                <div className="text-center text-[11px] font-semibold text-amber-700">
+                  {p.stockml}
+                </div>
+                <div className={`text-center text-[11px] font-semibold ${cls}`}>
+                  {total}
+                </div>
+                <div className="text-center text-[11px] text-neutral-600">
+                  {p.price ? formatPrice(p.price) : "—"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 };
 
 export const StockManager = () => {
@@ -281,7 +297,7 @@ export const StockManager = () => {
   const [editingProduct, setEditingProduct] = useState<any>(null); // modo crear
   const [editingFamily, setEditingFamily] = useState<EditFamilyState | null>(
     null
-  ); // modo matriz
+  );
   const [isExistingSKU, setIsExistingSKU] = useState<boolean>(false);
 
   // selección múltiple
@@ -332,6 +348,109 @@ export const StockManager = () => {
         orden: r.valor_numerico,
       }))
     );
+  };
+  // Añadir talla a la izquierda
+  const addTallaLeft_edit = (cols: LookupTal[]) => {
+    setEditingFamily((prev) => {
+      if (!prev) return prev;
+
+      const ordered = cols.map((c) => c.etiqueta);
+      const current = prev.cols.map((c) => c.etiqueta);
+
+      const indices = current
+        .map((et) => ordered.indexOf(et))
+        .filter((i) => i >= 0);
+      if (!indices.length) return prev;
+
+      const minIdx = Math.min(...indices);
+      if (minIdx <= 0) return prev; // ya estamos en la mínima
+
+      const newLabel = ordered[minIdx - 1];
+      if (current.includes(newLabel)) return prev;
+
+      const tallaObj = cols.find((t) => t.etiqueta === newLabel);
+      if (!tallaObj) return prev;
+
+      return {
+        ...prev,
+        cols: [tallaObj, ...prev.cols],
+        values: {
+          ...prev.values,
+          [tallaObj.id]: {
+            b2b: 0,
+            web: 0,
+            ml: 0,
+            price: prev.basePrice ?? 0,
+          },
+        },
+      };
+    });
+  };
+
+  // Añadir talla a la derecha
+  const addTallaRight_edit = (cols: LookupTal[]) => {
+    setEditingFamily((prev) => {
+      if (!prev) return prev;
+
+      const ordered = cols.map((c) => c.etiqueta);
+      const current = prev.cols.map((c) => c.etiqueta);
+
+      const indices = current
+        .map((et) => ordered.indexOf(et))
+        .filter((i) => i >= 0);
+      if (!indices.length) return prev;
+
+      const maxIdx = Math.max(...indices);
+      if (maxIdx >= ordered.length - 1) return prev; // ya estamos en la máxima
+
+      const newLabel = ordered[maxIdx + 1];
+      if (current.includes(newLabel)) return prev;
+
+      const tallaObj = cols.find((t) => t.etiqueta === newLabel);
+      if (!tallaObj) return prev;
+
+      return {
+        ...prev,
+        cols: [...prev.cols, tallaObj],
+        values: {
+          ...prev.values,
+          [tallaObj.id]: {
+            b2b: 0,
+            web: 0,
+            ml: 0,
+            price: prev.basePrice ?? 0,
+          },
+        },
+      };
+    });
+  };
+
+  // Quitar talla izquierda
+  const removeTallaLeft_edit = () => {
+    setEditingFamily((prev) => {
+      if (!prev) return prev;
+      if (prev.cols.length <= 1) return prev; // nunca menos de 1 talla
+
+      const remaining = prev.cols.slice(1);
+      return {
+        ...prev,
+        cols: remaining,
+      };
+    });
+  };
+
+  // Quitar talla derecha
+  const removeTallaRight_edit = () => {
+    setEditingFamily((prev) => {
+      if (!prev) return prev;
+      if (prev.cols.length <= 1) return prev;
+
+      const remaining = prev.cols.slice(0, -1);
+      return {
+        ...prev,
+        cols: remaining,
+      };
+    });
   };
 
   // diccionarios
@@ -429,6 +548,113 @@ export const StockManager = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cats.length, tallas.length]);
+  useEffect(() => {
+    if (!showModal || isExistingSKU) return;
+
+    const rawCatName =
+      cats.find((c) => c.id === Number(editingProduct?.categoria_id))?.name ||
+      "";
+    const catName = rawCatName.toLowerCase().trim();
+
+    let initial: string[];
+
+    if (catName === "accesorios") {
+      initial = ["Única"];
+    } else if (catName === "pantalones" || catName === "shorts") {
+      initial = ["40", "42", "44", "46"];
+    } else {
+      initial = ["S", "M", "L", "XL"];
+    }
+
+    setVisibleTallas((prev) => {
+      // primera vez → usa iniciales
+      if (!prev.length) return initial;
+
+      // filtrar por tallas válidas segun la tabla "tallas"
+      const allLabels = tallas.map((t) => t.etiqueta);
+      const stillValid = prev.filter((et) => allLabels.includes(et));
+
+      // si al cambiar categoría las anteriores ya no sirven, reset
+      if (!stillValid.length) return initial;
+
+      return stillValid;
+    });
+  }, [showModal, isExistingSKU, editingProduct?.categoria_id, cats, tallas]);
+  const addTallaLeft = (cols: { etiqueta: string }[]) => {
+    setVisibleTallas((prev) => {
+      if (!cols.length) return prev;
+
+      const ordered = cols.map((c) => c.etiqueta);
+      const current = prev.filter((et) => ordered.includes(et));
+      if (!current.length) return [ordered[0]];
+
+      const indices = current
+        .map((et) => ordered.indexOf(et))
+        .filter((i) => i >= 0);
+      const minIdx = Math.min(...indices);
+
+      if (minIdx <= 0) return current; // ya estamos en la mínima
+
+      const newLabel = ordered[minIdx - 1];
+      if (current.includes(newLabel)) return current;
+
+      return [newLabel, ...current];
+    });
+  };
+
+  const addTallaRight = (cols: { etiqueta: string }[]) => {
+    setVisibleTallas((prev) => {
+      if (!cols.length) return prev;
+
+      const ordered = cols.map((c) => c.etiqueta);
+      const current = prev.filter((et) => ordered.includes(et));
+      if (!current.length) return [ordered[0]];
+
+      const indices = current
+        .map((et) => ordered.indexOf(et))
+        .filter((i) => i >= 0);
+      const maxIdx = Math.max(...indices);
+
+      if (maxIdx >= ordered.length - 1) return current; // ya en la máxima
+
+      const newLabel = ordered[maxIdx + 1];
+      if (current.includes(newLabel)) return current;
+
+      return [...current, newLabel];
+    });
+  };
+
+  const removeTallaLeft = (cols: { etiqueta: string }[]) => {
+    setVisibleTallas((prev) => {
+      const ordered = cols.map((c) => c.etiqueta);
+      const current = prev.filter((et) => ordered.includes(et));
+      if (current.length <= 1) return current; // nunca menos de 1 talla
+
+      const indices = current
+        .map((et) => ordered.indexOf(et))
+        .filter((i) => i >= 0);
+      const minIdx = Math.min(...indices);
+      const minLabel = ordered[minIdx];
+
+      return current.filter((et) => et !== minLabel);
+    });
+  };
+
+  const removeTallaRight = (cols: { etiqueta: string }[]) => {
+    setVisibleTallas((prev) => {
+      const ordered = cols.map((c) => c.etiqueta);
+      const current = prev.filter((et) => ordered.includes(et));
+      if (current.length <= 1) return current;
+
+      const indices = current
+        .map((et) => ordered.indexOf(et))
+        .filter((i) => i >= 0);
+      const maxIdx = Math.max(...indices);
+      const maxLabel = ordered[maxIdx];
+
+      return current.filter((et) => et !== maxLabel);
+    });
+  };
 
   // refetch en cambios de filtros
   useEffect(() => {
@@ -468,12 +694,12 @@ export const StockManager = () => {
     const skus = selectedProducts.map((p) => String(p.sku));
 
     // B2B UPDATE
-    // const results = await Promise.allSettled([
-    //   ...skus.map((sku) => wooDeleteProductLocal(sku)),
-    //   ...skus.map((sku) => b2bDeleteProductLocal(sku)), // <-- AÑADIDO
-    // ]);
-    // const okWoo = results.filter((r) => r.status === "fulfilled").length;
-    // const failWoo = results.length - okWoo;
+    const results = await Promise.allSettled([
+      ...skus.map((sku) => wooDeleteProductLocal(sku)),
+      ...skus.map((sku) => b2bDeleteProductLocal(sku)), // <-- AÑADIDO
+    ]);
+    const okWoo = results.filter((r) => r.status === "fulfilled").length;
+    const failWoo = results.length - okWoo;
 
     const { error } = await supabase
       .from("productos")
@@ -495,9 +721,9 @@ export const StockManager = () => {
         channel: "stock",
       })
     );
-    // toast.success(
-    //   `Eliminados ${selectedIds.length} en BD. Woo: ${okWoo} ok / ${failWoo} fallo(s).`
-    // );
+    toast.success(
+      `Eliminados ${selectedIds.length} en BD. Woo: ${okWoo} ok / ${failWoo} fallo(s).`
+    );
 
     setSelectedIds([]);
     fetchProducts({ silent: true });
@@ -549,11 +775,25 @@ export const StockManager = () => {
 
   // abrir modal de edición MATRIZ por familia
   const openEditFamily = (fam: FamRow) => {
-    const cols = columnsForFam(fam);
-    const values: EditFamilyState["values"] = {};
-    let basePrice = 0;
+    // Todas las tallas posibles para este tipo (pantalón, alfa, única, etc.)
+    const allCols = columnsForFam(fam);
 
-    cols.forEach((t) => {
+    // 👇 Solo las tallas que REALMENTE existen en BD para esta familia
+    const existingCols = allCols.filter((t) => !!fam.byTalla[t.id]);
+
+    const values: EditFamilyState["values"] = {};
+
+    // Tomamos cualquier producto de la familia como referencia de precios
+    const firstProd = Object.values(fam.byTalla)[0];
+    const basePrice = Number(firstProd?.price ?? 0);
+
+    // Usamos los precios por canal que YA tienes en la tabla
+    const priceb2b = (firstProd as any)?.priceb2b ?? basePrice;
+    const priceweb = (firstProd as any)?.priceweb ?? basePrice;
+    const priceml = (firstProd as any)?.priceml ?? basePrice;
+
+    // Solo llenamos valores para tallas que existen
+    existingCols.forEach((t) => {
       const p = fam.byTalla[t.id];
       values[t.id] = {
         id: p?.id,
@@ -562,26 +802,32 @@ export const StockManager = () => {
         ml: Number(p?.stockml ?? 0),
         price: Number(p?.price ?? 0),
       };
-      if (p && !basePrice) basePrice = Number(p.price ?? 0);
     });
 
     setEditingFamily({
       name: fam.name,
       categoria_id: fam.categoria_id,
       tipo: fam.tipo,
-      cols,
+   sku: firstProd?.sku ?? "",   
+      cols: existingCols, // 👈 solo las tallas con producto
       values,
-      basePrice, // fallback para tallas nuevas
+      basePrice,
+      priceb2b: Number(priceb2b) || 0,
+      priceweb: Number(priceweb) || 0,
+      priceml: Number(priceml) || 0,
     });
+
     setIsExistingSKU(true);
     setShowModal(true);
   };
 
-  // paginación sobre familias
+  /* ========================= PAGINACIÓN SOBRE FAMILIAS ========================= */
+
   const totalFamilies = fams.length;
   const totalPages = Math.max(1, Math.ceil(totalFamilies / pageSize));
   const showingFrom = totalFamilies === 0 ? 0 : (page - 1) * pageSize + 1;
   const showingTo = Math.min(totalFamilies, page * pageSize);
+
   const pageFams = useMemo(
     () => fams.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize),
     [fams, page, pageSize]
@@ -592,154 +838,218 @@ export const StockManager = () => {
   const goNext = () => setPage((p) => Math.min(totalPages, p + 1));
   const goLast = () => setPage(totalPages);
 
-  // ====== Guardar
-    const saveProduct = async () => {
+  const [saving, setSaving] = useState(false);
+
+  /* ========================= GUARDAR PRODUCTO ========================= */
+
+  const saveProduct = async () => {
+    setSaving(true);
     try {
-      // =========================
-// MODO EDITAR FAMILIA
-// =========================
-if (isExistingSKU && editingFamily) {
+      /* ===================== EDITAR FAMILIA ===================== */
+      if (isExistingSKU && editingFamily) {
+        // precios por canal (si no los usas aún, puedes dejar basePrice)
+        const priceb2b = Math.max(
+          0,
+          Number(editingFamily.priceb2b || editingFamily.basePrice || 0)
+        );
+        const priceweb = Math.max(
+          0,
+          Number(editingFamily.priceweb || editingFamily.basePrice || 0)
+        );
+        const priceml = Math.max(
+          0,
+          Number(editingFamily.priceml || editingFamily.basePrice || 0)
+        );
 
-  const updates: Array<{
-    id: number;
-    stockb2b: number;
-    stockweb: number;
-    stockml: number;
-    price: number;
-  }> = [];
+        // productos actuales en BD para esta familia
+        const famProducts = products.filter(
+          (p) =>
+            p.name === editingFamily.name &&
+            (p.categoria_id ?? null) === (editingFamily.categoria_id ?? null)
+        );
 
-  const creates: Array<{
-    name: string;
-    sku: string;
-    price: number;
-    categoria_id: number | null;
-    talla_id: number;
-    stockb2b: number;
-    stockweb: number;
-    stockml: number;
-  }> = [];
+        const keptTallaIds = new Set(editingFamily.cols.map((c) => c.id));
 
-  // SKU base de la familia
-  const anyProduct = products.find(
-    (p) =>
-      p.name === editingFamily.name &&
-      (p.categoria_id ?? null) === (editingFamily.categoria_id ?? null),
-  );
-  const familySku = anyProduct?.sku || "";
+        // IDs a eliminar (tallas que ya no están en cols)
+        const idsToDelete = famProducts
+          .filter((p) => p.talla_id && !keptTallaIds.has(p.talla_id))
+          .map((p) => p.id);
 
-  // Procesar tallas
-  for (const t of editingFamily.cols) {
-    const v = editingFamily.values[t.id];
-    if (!v) continue;
+        const updates: Array<{
+          id: number;
+          stockb2b: number;
+          stockweb: number;
+          stockml: number;
+          priceb2b: number;
+          priceweb: number;
+          priceml: number;
+        }> = [];
 
-    const b2b = Math.max(0, Number(v.b2b || 0));
-    const web = Math.max(0, Number(v.web || 0));
-    const ml = Math.max(0, Number(v.ml || 0));
-    const price = Math.max(0, Number(v.price ?? editingFamily.basePrice ?? 0));
+        const creates: Array<{
+          name: string;
+          sku: string;
+          categoria_id: number | null;
+          talla_id: number;
+          stockb2b: number;
+          stockweb: number;
+          stockml: number;
+          priceb2b: number;
+          priceweb: number;
+          priceml: number;
+        }> = [];
 
-    if (v.id) {
-      // EXISTIA → SOLO UPDATE
-      updates.push({
-        id: v.id,
-        stockb2b: b2b,
-        stockweb: web,
-        stockml: ml,
-        price,
-      });
-    } else {
-      // NUEVA TALLA → CREAR
-      const total = b2b + web + ml;
-      if (total > 0) {
-        creates.push({
-          name: editingFamily.name,
-          sku: familySku,
-          price,
-          categoria_id: editingFamily.categoria_id ?? null,
-          talla_id: t.id,
-          stockb2b: b2b,
-          stockweb: web,
-          stockml: ml,
-        });
-      }
-    }
-  }
+        // recorrer solo tallas visibles (cols)
+        for (const t of editingFamily.cols) {
+          const v = editingFamily.values[t.id];
+          if (!v) continue;
 
-  // UPDATE EN BD
-  if (updates.length) {
-    await Promise.allSettled(
-      updates.map((u) =>
-        supabase
-          .from("productos")
-          .update({
-            stockb2b: u.stockb2b,
-            stockweb: u.stockweb,
-            stockml: u.stockml,
-            price: u.price,
-          })
-          .eq("id", u.id),
-      ),
-    );
-  }
+          const b2b = Math.max(0, Number(v.b2b || 0));
+          const web = Math.max(0, Number(v.web || 0));
+          const ml = Math.max(0, Number(v.ml || 0));
+          const total = b2b + web + ml;
 
-  // INSERT NUEVAS TALLAS
-  if (creates.length) {
-    const { data, error } = await supabase
-      .from("productos")
-      .insert(creates)
-      .select();
+          if (v.id) {
+            // update existente
+            updates.push({
+              id: v.id,
+              stockb2b: b2b,
+              stockweb: web,
+              stockml: ml,
+              priceb2b,
+              priceweb,
+              priceml,
+            });
+          } else if (total > 0) {
+            // crear nueva talla
+            creates.push({
+              name: editingFamily.name,
+              sku: editingFamily.sku || "",
+              categoria_id: editingFamily.categoria_id ?? null,
+              talla_id: t.id,
+              stockb2b: b2b,
+              stockweb: web,
+              stockml: ml,
+              priceb2b,
+              priceweb,
+              priceml,
+            });
+          }
+        }
 
-    if (error) {
-      console.error(error);
-      toastAndLog("No se pudieron crear algunas tallas.", "error");
-    }
+        /* 1) ELIMINAR TALLAS QUITADAS DEL GRID */
+        if (idsToDelete.length) {
+          const prodsToDelete = famProducts.filter((p) =>
+            idsToDelete.includes(p.id)
+          );
+          const skusToDelete = prodsToDelete.map((p) => String(p.sku || ""));
 
-    // 🔥 CREAR EN WOOCOMMERCE LAS NUEVAS tallas (producto simple común)
-    // for (const row of creates) {
-    //   await wooCreateProductLocal({
-    //     skuLocal: row.sku,
-    //     name: row.name,
-    //     price: Number(row.price),
-    //     initialStockWeb: Number(row.stockweb || 0),
-    //     categoryIdLocal: row.categoria_id, 
-    //   });
-    // }
-  }
+          // Woo + B2B best-effort
+          try {
+            await Promise.allSettled([
+              ...skusToDelete.map((s) => wooDeleteProductLocal(s)),
+              ...skusToDelete.map((s) => b2bDeleteProductLocal(s)),
+            ]);
+          } catch {}
 
-  // UPDATE STOCK TOTAL EN WOO + B2B
-  // try {
-  //   let totalWeb = 0;
-  //   let totalB2B = 0;
+          const { error: delError } = await supabase
+            .from("productos")
+            .delete()
+            .in("id", idsToDelete);
+          if (delError) {
+            console.error(delError);
+            toastAndLog("No se pudieron eliminar algunas tallas.", "error");
+          }
+        }
 
-  //   for (const t of editingFamily.cols) {
-  //     const v = editingFamily.values[t.id];
-  //     if (!v) continue;
-  //     totalWeb += Number(v.web || 0);
-  //     totalB2B += Number(v.b2b || 0);
-  //   }
+        /* 2) ACTUALIZAR EXISTENTES */
+        if (updates.length) {
+          await Promise.allSettled(
+            updates.map((u) =>
+              supabase
+                .from("productos")
+                .update({
+                  stockb2b: u.stockb2b,
+                  stockweb: u.stockweb,
+                  stockml: u.stockml,
+                  priceb2b: u.priceb2b,
+                  priceweb: u.priceweb,
+                  priceml: u.priceml,
+                  price: u.priceweb, // para Woo usamos Web como base
+                })
+                .eq("id", u.id)
+            )
+          );
+        }
 
-  //   if (familySku) {
-  //     await Promise.allSettled([
-  //       wooUpdateProductLocal({
-  //         skuLocal: familySku,
-  //         price: Number(editingFamily.basePrice || 0),
-  //         absoluteStockWeb: totalWeb,
-  //       }),
-  //       b2bUpdateProductLocal({
-  //         skuLocal: familySku,
-  //         price: Number(editingFamily.basePrice || 0),
-  //         absoluteStockB2b: totalB2B,
-  //       }),
-  //     ]);
-  //   }
-  // } catch (_) {}
+        /* 3) CREAR NUEVAS TALLAS */
+        let createdRows: any[] = [];
+        if (creates.length) {
+          const { data, error } = await supabase
+            .from("productos")
+            .insert(
+              creates.map((c) => ({
+                ...c,
+                price: c.priceweb,
+              }))
+            )
+            .select();
 
-  toastAndLog("Cambios guardados correctamente.", "sync");
+          if (error) {
+            console.error(error);
+            toastAndLog("No se pudieron crear algunas tallas.", "error");
+          } else {
+            createdRows = data ?? [];
+          }
+        }
 
-}
- else {
-        // =========================
-        // MODO CREAR NUEVA FAMILIA
-        // =========================
+        /* 4) SYNC WOO + B2B */
+        try {
+          await Promise.allSettled([
+            // updates
+            ...updates.map((u) => {
+              const p = products.find((pp) => pp.id === u.id);
+              if (!p?.sku) return Promise.resolve();
+
+              return Promise.allSettled([
+                wooUpdateProductLocal({
+                  skuLocal: String(p.sku),
+                  price: Number(u.priceweb),
+                  absoluteStockWeb: Number(u.stockweb),
+                }),
+                b2bUpdateProductLocal({
+                  skuLocal: String(p.sku),
+                  price: Number(u.priceb2b),
+                  absoluteStockB2b: Number(u.stockb2b),
+                }),
+              ]);
+            }),
+
+            // nuevas
+            ...createdRows.map((row) =>
+              Promise.allSettled([
+                wooCreateProductLocal({
+                  skuLocal: row.sku,
+                  name: row.name,
+                  price: Number(row.priceweb || row.price || 0),
+                  initialStockWeb: Number(row.stockweb || 0),
+                }),
+                b2bCreateProductLocal({
+                  skuLocal: row.sku,
+                  name: row.name,
+                  price: Number(row.priceb2b || row.price || 0),
+                  initialStockB2b: Number(row.stockb2b || 0),
+                }),
+              ])
+            ),
+          ]);
+        } catch {}
+
+        const msg: string[] = [];
+        if (updates.length) msg.push(`Actualizadas ${updates.length}`);
+        if (creates.length) msg.push(`Creadas ${creates.length}`);
+        if (idsToDelete.length) msg.push(`Eliminadas ${idsToDelete.length}`);
+        toastAndLog(msg.join(" · ") || "Sin cambios", "sync");
+      } else {
         const name = (editingProduct?.name || "").trim();
         const categoria_id = Number(editingProduct?.categoria_id || 0) || null;
         const sku = (editingProduct?.sku || "").trim();
@@ -749,6 +1059,10 @@ if (isExistingSKU && editingFamily) {
         if (!sku) return toast.error("Ingresa un SKU para la familia.");
 
         const matrix = editingProduct?.matrix || {};
+        const priceb2b = Math.max(0, Number(editingProduct?.priceb2b || 0));
+        const priceweb = Math.max(0, Number(editingProduct?.priceweb || 0));
+        const priceml = Math.max(0, Number(editingProduct?.priceml || 0));
+
         const rows = Object.entries(matrix)
           .map(([tId, v]: any) => {
             const b2b = Math.max(0, Number(v?.b2b || 0));
@@ -756,19 +1070,19 @@ if (isExistingSKU && editingFamily) {
             const ml = Math.max(0, Number(v?.ml || 0));
             const total = b2b + web + ml;
             if (total === 0) return null;
-            const price = Math.max(
-              0,
-              Number(v?.price ?? editingProduct?.basePrice ?? 0),
-            );
+
             return {
               name,
-              sku, // mismo SKU para toda la familia
-              price,
+              sku, // 👈 MUY IMPORTANTE
               categoria_id,
               talla_id: Number(tId),
               stockb2b: b2b,
               stockweb: web,
               stockml: ml,
+              priceb2b,
+              priceweb,
+              priceml,
+              price: priceweb, // Woo usa Web como base
             };
           })
           .filter(Boolean) as any[];
@@ -780,45 +1094,33 @@ if (isExistingSKU && editingFamily) {
           .from("productos")
           .insert(rows)
           .select();
+
         if (error || !data) {
           console.error(error);
           return toastAndLog("No se pudieron crear los productos.", "error");
         }
 
-        // === Woo + B2B: UN SOLO CREATE POR FAMILIA ===
-        // try {
-        //   const totalWeb = data.reduce(
-        //     (acc: number, row: any) => acc + Number(row.stockweb || 0),
-        //     0,
-        //   );
-        //   const totalB2B = data.reduce(
-        //     (acc: number, row: any) => acc + Number(row.stockb2b || 0),
-        //     0,
-        //   );
-        //   const priceForWoo = Number(data[0]?.price || 0);
-        //   const catName =
-        //     categoria_id && catById[categoria_id]
-        //       ? catById[categoria_id]
-        //       : undefined;
+        try {
+          await Promise.allSettled([
+            ...data.map((row: any) =>
+              wooCreateProductLocal({
+                skuLocal: row.sku,
+                name: row.name,
+                price: Number(row.price),
+                initialStockWeb: Number(row.stockweb),
+              })
+            ),
 
-        //   await Promise.allSettled([
-        //     wooCreateProductLocal({
-        //       skuLocal: sku,
-        //       name,
-        //       price: priceForWoo,
-        //       initialStockWeb: totalWeb,
-        //       categoryIdLocal: categoria_id,
-        //     }),
-        //     b2bCreateProductLocal({
-        //       skuLocal: sku,
-        //       name,
-        //       price: priceForWoo,
-        //       initialStockB2b: totalB2B,
-        //     }),
-        //   ]);
-        // } catch {
-        //   // best-effort
-        // }
+            ...data.map((row: any) =>
+              b2bCreateProductLocal({
+                skuLocal: row.sku,
+                name: row.name,
+                price: Number(row.priceb2b || row.price),
+                initialStockB2b: Number(row.stockb2b),
+              })
+            ),
+          ]);
+        } catch {}
 
         toastAndLog(`Creadas ${rows.length} talla(s).`, "sync");
       }
@@ -826,6 +1128,7 @@ if (isExistingSKU && editingFamily) {
       console.error("Error en saveProduct:", err);
       toastAndLog("Error en la operación.", "error");
     } finally {
+      setSaving(false);
       setShowModal(false);
       setEditingProduct(null);
       setEditingFamily(null);
@@ -834,7 +1137,7 @@ if (isExistingSKU && editingFamily) {
     }
   };
 
-
+  /* ========================= SELECTED CATEGORY / TALLA OPTIONS ========================= */
 
   const selectedCatName = useMemo(() => {
     const id = Number(editingProduct?.categoria_id || 0);
@@ -857,27 +1160,180 @@ if (isExistingSKU && editingFamily) {
       });
   }, [tallas, selectedCatName]);
 
-  if (loading)
-    return (
-      <div className="text-center py-12 text-neutral-500">
-        Cargando datos...
-      </div>
-    );
+  /* ========================= TALLAS VISIBLES (DINÁMICAS) ========================= */
 
-  const channelBadge = (ch: Channel) =>
-    ch === "B2B"
-      ? "bg-fuchsia-100 text-fuchsia-700"
-      : ch === "Web"
-      ? "bg-blue-100 text-blue-700"
-      : "bg-amber-100 text-amber-700";
-      // Genera un SKU único basado en nombre y categoría
+/* ========================= TALLAS VISIBLES (DINÁMICAS) ========================= */
+
+// Se usa SOLO en modo CREAR
+const [visibleTallas, setVisibleTallas] = useState<string[]>([]);
+
+// Agregar una talla adicional (modo crear)
+const addNextTalla = (availableCols: any[]) => {
+  const remaining = availableCols.filter((t) => !visibleTallas.includes(t.etiqueta));
+  if (remaining.length > 0) {
+    setVisibleTallas((prev) => [...prev, remaining[0].etiqueta]);
+  }
+};
+
+// Quitar última talla visible (modo crear)
+const removeLastTalla = () => {
+  if (visibleTallas.length > 4) {
+    setVisibleTallas((prev) => prev.slice(0, -1));
+  }
+};
+
+// SKU autogenerado
 const generateSKU = (name: string, categoriaId: number | string) => {
   if (!name || !categoriaId) return "";
-  const cleanName = name.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-  const prefix = cleanName.substring(0, 3) || "PRD";
-  const randomPart = Math.random().toString(36).substring(2, 7).toUpperCase();
-  return `${prefix}-${categoriaId}-${randomPart}`;
+  const clean = name.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const prefix = clean.substring(0, 3) || "PRD";
+  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `${prefix}-${categoriaId}-${random}`;
 };
+
+/* ========================= FUNCIONES AUXILIARES PARA EDITAR FAMILIA ========================= */
+
+const updateFamilyStock = (
+  tId: number,
+  field: "b2b" | "web" | "ml",
+  value: string
+) => {
+  const n = Number((value || "0").replace(/[^\d]/g, ""));
+
+  setEditingFamily((prev) => {
+    if (!prev) return prev;
+
+    const oldVal = prev.values[tId] || {
+      id: null,
+      b2b: 0,
+      web: 0,
+      ml: 0,
+      price: prev.basePrice ?? 0,
+    };
+
+    return {
+      ...prev,
+      values: {
+        ...prev.values,
+        [tId]: { ...oldVal, [field]: n },
+      },
+    };
+  });
+};
+
+/* ========================= CONTROL DE TALLAS PARA EDITAR (IZQ / DER) ========================= */
+
+const getAllTallasForFamily = () => {
+  const catName =
+    catById[editingFamily?.categoria_id]?.toLowerCase().trim() || "";
+
+  const usaNumericas = catName === "pantalones" || catName === "shorts";
+  const isUnica = catName === "accesorios";
+
+  const filtered = tallas.filter((t) =>
+    isUnica
+      ? t.tipo === "unica"
+      : usaNumericas
+      ? t.tipo === "numerica"
+      : t.tipo === "alfanumerica"
+  );
+
+  return filtered.sort((a, b) =>
+    usaNumericas
+      ? (a.orden ?? 0) - (b.orden ?? 0)
+      : ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta)
+  );
+};
+
+const handleAddLeft = () => {
+  setEditingFamily(prev => {
+    if (!prev) return prev;
+
+    const all = getAllTallasForFamily();
+    const current = prev.cols;
+
+    const first = current[0];
+    const index = all.findIndex(t => t.id === first.id);
+    if (index <= 0) return prev;
+
+    const newTalla = all[index - 1];
+
+    return {
+      ...prev,
+      cols: [newTalla, ...prev.cols],
+      values: {
+        ...prev.values,
+        [newTalla.id]: prev.values[newTalla.id] || {
+          id: null,
+          b2b: 0,
+          web: 0,
+          ml: 0,
+          price: prev.basePrice ?? 0,
+        },
+      },
+    };
+  });
+};
+
+
+const handleAddRight = () => {
+  setEditingFamily(prev => {
+    if (!prev) return prev;
+
+    const all = getAllTallasForFamily();
+    const current = prev.cols;
+
+    const last = current[current.length - 1];
+    const index = all.findIndex(t => t.id === last.id);
+    if (index >= all.length - 1) return prev;
+
+    const newTalla = all[index + 1];
+
+    return {
+      ...prev,
+      cols: [...prev.cols, newTalla],
+      values: {
+        ...prev.values,
+        [newTalla.id]: prev.values[newTalla.id] || {
+          id: null,
+          b2b: 0,
+          web: 0,
+          ml: 0,
+          price: prev.basePrice ?? 0,
+        },
+      },
+    };
+  });
+};
+
+
+// Remover izquierda
+const handleRemoveLeft = () => {
+  setEditingFamily(prev => {
+    if (!prev) return prev;
+    if (prev.cols.length <= 1) return prev;
+
+    return {
+      ...prev,
+      cols: prev.cols.slice(1),
+    };
+  });
+};
+
+
+// Remover derecha
+const handleRemoveRight = () => {
+  setEditingFamily(prev => {
+    if (!prev) return prev;
+    if (prev.cols.length <= 1) return prev;
+
+    return {
+      ...prev,
+      cols: prev.cols.slice(0, -1),
+    };
+  });
+};
+
 
 
   return (
@@ -925,24 +1381,49 @@ const generateSKU = (name: string, categoriaId: number | string) => {
           </select>
 
           <button
-            onClick={() => {
+            onClick={async () => {
+              const tempSku = generateSKU(
+                editingProduct?.name || "",
+                editingProduct?.categoria_id || ""
+              );
+
+              const { data: found } = await supabase
+                .from("productos")
+                .select("*")
+                .eq("sku", tempSku)
+                .limit(1);
+
+              if (found && found.length > 0) {
+                const prod = found[0];
+
+                const fam = fams.find(
+                  (f) =>
+                    f.name === prod.name && f.categoria_id === prod.categoria_id
+                );
+
+                if (fam) {
+                  openEditFamily(fam);
+                  return;
+                }
+              }
+
               setEditingProduct({
-                sku: "",
                 name: "",
-                price: "",
                 categoria_id: "",
-                talla_id: "",
-                stockb2b: "",
-                stockweb: "",
-                stockml: "",
+                sku: tempSku,
+                priceb2b: 0,
+                priceweb: 0,
+                priceml: 0,
+                matrix: undefined,
               });
-              setIsExistingSKU(false);
-              setEditingFamily(null);
+
+              setVisibleTallas(["S", "M", "L", "XL"]);
               setShowModal(true);
+              setIsExistingSKU(false);
             }}
-            className="bg-neutral-900 hover:bg-neutral-800 text-white px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm transition-all"
+            className="bg-green-600 text-white px-4 py-2 rounded"
           >
-            <Plus size={16} /> Agregar
+            + Agregar
           </button>
         </div>
       </div>
@@ -1096,12 +1577,13 @@ const generateSKU = (name: string, categoriaId: number | string) => {
                 : "Agregar producto nuevo"}
             </h3>
 
-            {/* MODO EDITAR: MATRIZ */}
+            {/* ================== MODO EDITAR ================== */}
             {isExistingSKU && editingFamily && (
               <>
                 <div className="mb-2 text-sm text-neutral-700 dark:text-neutral-300">
                   <strong>Producto:</strong> {editingFamily.name}
                 </div>
+
                 <div className="mb-2 text-sm text-neutral-700 dark:text-neutral-300">
                   <strong>Categoría:</strong>{" "}
                   {editingFamily.categoria_id
@@ -1109,54 +1591,74 @@ const generateSKU = (name: string, categoriaId: number | string) => {
                     : "—"}
                 </div>
 
-                <div className="mb-3 text-sm">
-                  <label className="block text-neutral-700 dark:text-neutral-300 mb-1">
-                    Precio base (se usará al crear tallas nuevas)
+                {/* SKU en vez del precio base */}
+                <div className="mb-4">
+                  <label className="block text-sm text-neutral-600 dark:text-neutral-400 mb-1">
+                    SKU (solo lectura)
                   </label>
                   <input
                     type="text"
-                    inputMode="numeric"
-                    className="border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 w-40 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
-                    value={String(editingFamily.basePrice ?? 0)}
-                    onBeforeInput={(e) => {
-                      const el = e.currentTarget;
-                      const start = el.selectionStart ?? el.value.length;
-                      const end = el.selectionEnd ?? el.value.length;
-                      const data = (e as any).data ?? "";
-                      const proposed =
-                        el.value.slice(0, start) + data + el.value.slice(end);
-                      if (!/^\d*$/.test(proposed)) e.preventDefault();
-                    }}
-                    onPaste={(e) => {
-                      const paste = (
-                        e.clipboardData || (window as any).clipboardData
-                      ).getData("text");
-                      if (!/^\d*$/.test(paste)) e.preventDefault();
-                    }}
-                    onChange={(e) =>
-                      setEditingFamily((prev) =>
-                        prev
-                          ? { ...prev, basePrice: Number(e.target.value || 0) }
-                          : prev
-                      )
-                    }
+                    readOnly
+                    value={editingFamily.sku}
+                    className="border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-300 px-3 py-2 rounded-lg w-60 font-mono"
                   />
                 </div>
 
                 <div className="mb-3 text-xs text-neutral-500 dark:text-neutral-400">
-                  Edita el stock <strong>absoluto</strong> por talla y canal. El
-                  precio se puede ajustar por talla.
+                  Edita el stock <strong>absoluto</strong> por talla y por
+                  canal. <strong>Los precios se manejan por canal.</strong>
                 </div>
 
-                {/* MATRIZ */}
+                {/* BOTONES de tallas */}
+                <div className="flex justify-between mb-2">
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAddLeft}
+                      className="px-2 py-1 bg-neutral-200 dark:bg-neutral-700 rounded text-xs hover:bg-neutral-300 dark:hover:bg-neutral-600"
+                    >
+                      + izq
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRemoveLeft}
+                      className="px-2 py-1 bg-neutral-200 dark:bg-neutral-700 rounded text-xs hover:bg-neutral-300 dark:hover:bg-neutral-600"
+                    >
+                      − izq
+                    </button>
+                  </div>
+
+                  <span className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+                    Matriz de tallas
+                  </span>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAddRight}
+                      className="px-2 py-1 bg-neutral-200 dark:bg-neutral-700 rounded text-xs hover:bg-neutral-300 dark:hover:bg-neutral-600"
+                    >
+                      + der
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRemoveRight}
+                      className="px-2 py-1 bg-neutral-200 dark:bg-neutral-700 rounded text-xs hover:bg-neutral-300 dark:hover:bg-neutral-600"
+                    >
+                      − der
+                    </button>
+                  </div>
+                </div>
+
+                {/* MATRIZ EDITAR */}
                 <div className="overflow-x-auto" style={{ minWidth: 480 }}>
                   <div
                     className="grid gap-y-2 gap-x-2 items-center text-sm"
                     style={{
-                      gridTemplateColumns: `120px repeat(${editingFamily.cols.length}, minmax(72px, 1fr))`,
+                      gridTemplateColumns: `120px repeat(${editingFamily.cols.length}, minmax(72px, 1fr)) 120px`,
                     }}
                   >
-                    {/* Cabecera de tallas */}
+                    {/* Cabecera tallas + columna Precio */}
                     <div></div>
                     {editingFamily.cols.map((t) => (
                       <div
@@ -1166,101 +1668,126 @@ const generateSKU = (name: string, categoriaId: number | string) => {
                         {t.etiqueta}
                       </div>
                     ))}
+                    <div className="text-center text-xs text-neutral-700 dark:text-neutral-300 font-medium">
+                      Precio
+                    </div>
 
-                    {/* Canales */}
-                    {(["B2B", "Web", "ML"] as const).map((label) => (
-                      <div className="contents" key={label}>
-                        <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
-                            {label}
-                          </span>
-                        </div>
-
-                        {editingFamily.cols.map((t) => {
-                          const v = editingFamily.values[t.id];
-                          const field =
-                            label === "B2B"
-                              ? "b2b"
-                              : label === "Web"
-                              ? "web"
-                              : "ml";
-                          const value = (v as any)?.[field] ?? 0;
-                          const disabled = !v?.id;
-                          return (
-                            <div key={t.id} className="text-center">
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                className={`w-full border rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white border-neutral-300 dark:border-neutral-700 ${
-                                  disabled
-                                    ? "opacity-40 cursor-not-allowed"
-                                    : "focus:ring-2 focus:ring-neutral-500"
-                                }`}
-                                value={disabled ? "" : String(value)}
-                                placeholder={disabled ? "—" : "0"}
-                                disabled={disabled}
-                                onBeforeInput={(e) => {
-                                  const el = e.currentTarget;
-                                  const start =
-                                    el.selectionStart ?? el.value.length;
-                                  const end =
-                                    el.selectionEnd ?? el.value.length;
-                                  const data = (e as any).data ?? "";
-                                  const proposed =
-                                    el.value.slice(0, start) +
-                                    data +
-                                    el.value.slice(end);
-                                  if (!/^\d*$/.test(proposed))
-                                    e.preventDefault();
-                                }}
-                                onPaste={(e) => {
-                                  const paste = (
-                                    e.clipboardData ||
-                                    (window as any).clipboardData
-                                  ).getData("text");
-                                  if (!/^\d*$/.test(paste)) e.preventDefault();
-                                }}
-                                onChange={(e) => {
-                                  const n =
-                                    e.target.value === ""
-                                      ? 0
-                                      : Number(
-                                          e.target.value.replace(/[^\d]/g, "")
-                                        );
-                                  setEditingFamily((prev) => {
-                                    if (!prev) return prev;
-                                    const cur = prev.values[t.id] || {
-                                      b2b: 0,
-                                      web: 0,
-                                      ml: 0,
-                                      price: prev.basePrice ?? 0,
-                                    };
-                                    return {
-                                      ...prev,
-                                      values: {
-                                        ...prev.values,
-                                        [t.id]: { ...cur, [field]: n },
-                                      },
-                                    };
-                                  });
-                                }}
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ))}
-
-                    {/* Total */}
+                    {/* ===== B2B ===== */}
                     <div className="text-right pr-2">
-                      <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
-                        Total
+                      <span className="px-2 py-1 rounded bg-fuchsia-100 dark:bg-fuchsia-900 text-fuchsia-700 dark:text-fuchsia-200 text-xs font-semibold">
+                        B2B
                       </span>
                     </div>
+                    {editingFamily.cols.map((t) => (
+                      <div key={t.id} className="text-center">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-200"
+                          value={editingFamily.values[t.id]?.b2b ?? 0}
+                          onChange={(e) =>
+                            updateFamilyStock(t.id, "b2b", e.target.value)
+                          }
+                        />
+                      </div>
+                    ))}
+                    <div className="text-center">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-200"
+                        value={editingFamily.priceb2b ?? 0}
+                        onChange={(e) =>
+                          setEditingFamily((p) =>
+                            p
+                              ? { ...p, priceb2b: Number(e.target.value || 0) }
+                              : p
+                          )
+                        }
+                      />
+                    </div>
+
+                    {/* ===== Web ===== */}
+                    <div className="text-right pr-2">
+                      <span className="px-2 py-1 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200 text-xs font-semibold">
+                        Web
+                      </span>
+                    </div>
+                    {editingFamily.cols.map((t) => (
+                      <div key={t.id} className="text-center">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-200"
+                          value={editingFamily.values[t.id]?.web ?? 0}
+                          onChange={(e) =>
+                            updateFamilyStock(t.id, "web", e.target.value)
+                          }
+                        />
+                      </div>
+                    ))}
+                    <div className="text-center">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-200"
+                        value={editingFamily.priceweb ?? 0}
+                        onChange={(e) =>
+                          setEditingFamily((p) =>
+                            p
+                              ? { ...p, priceweb: Number(e.target.value || 0) }
+                              : p
+                          )
+                        }
+                      />
+                    </div>
+
+                    {/* ===== ML ===== */}
+                    <div className="text-right pr-2">
+                      <span className="px-2 py-1 rounded bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-200 text-xs font-semibold">
+                        ML
+                      </span>
+                    </div>
+                    {editingFamily.cols.map((t) => (
+                      <div key={t.id} className="text-center">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-200"
+                          value={editingFamily.values[t.id]?.ml ?? 0}
+                          onChange={(e) =>
+                            updateFamilyStock(t.id, "ml", e.target.value)
+                          }
+                        />
+                      </div>
+                    ))}
+                    <div className="text-center">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-200"
+                        value={editingFamily.priceml ?? 0}
+                        onChange={(e) =>
+                          setEditingFamily((p) =>
+                            p
+                              ? { ...p, priceml: Number(e.target.value || 0) }
+                              : p
+                          )
+                        }
+                      />
+                    </div>
+
+                    {/* ===== Total ===== */}
+                    <div className="text-right pr-2 text-neutral-600 dark:text-neutral-400 text-xs font-semibold">
+                      Total
+                    </div>
                     {editingFamily.cols.map((t) => {
-                      const v = editingFamily.values[t.id];
-                      const total =
-                        (v?.b2b ?? 0) + (v?.web ?? 0) + (v?.ml ?? 0);
+                      const v = editingFamily.values[t.id] || {
+                        b2b: 0,
+                        web: 0,
+                        ml: 0,
+                      };
+                      const total = v.b2b + v.web + v.ml;
                       const cls = getStockStatusClass(total);
                       return (
                         <div key={t.id} className="text-center">
@@ -1270,76 +1797,16 @@ const generateSKU = (name: string, categoriaId: number | string) => {
                         </div>
                       );
                     })}
-
-                    {/* Precio */}
-                    <div className="text-right pr-2">
-                      <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
-                        Precio
-                      </span>
-                    </div>
-                    {editingFamily.cols.map((t) => {
-                      const v = editingFamily.values[t.id];
-                      const value = Number(
-                        v?.price ?? editingFamily.basePrice ?? 0
-                      );
-                      return (
-                        <div key={t.id} className="text-center">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
-                            value={String(value || 0)}
-                            onBeforeInput={(e) => {
-                              const el = e.currentTarget;
-                              const start =
-                                el.selectionStart ?? el.value.length;
-                              const end = el.selectionEnd ?? el.value.length;
-                              const data = (e as any).data ?? "";
-                              const proposed =
-                                el.value.slice(0, start) +
-                                data +
-                                el.value.slice(end);
-                              if (!/^\d*$/.test(proposed)) e.preventDefault();
-                            }}
-                            onPaste={(e) => {
-                              const paste = (
-                                e.clipboardData || (window as any).clipboardData
-                              ).getData("text");
-                              if (!/^\d*$/.test(paste)) e.preventDefault();
-                            }}
-                            onChange={(e) => {
-                              const n = Number(
-                                (e.target.value || "0").replace(/[^\d]/g, "")
-                              );
-                              setEditingFamily((prev) => {
-                                if (!prev) return prev;
-                                const cur = prev.values[t.id] || {
-                                  b2b: 0,
-                                  web: 0,
-                                  ml: 0,
-                                  price: 0,
-                                };
-                                return {
-                                  ...prev,
-                                  values: {
-                                    ...prev.values,
-                                    [t.id]: { ...cur, price: n },
-                                  },
-                                };
-                              });
-                            }}
-                          />
-                        </div>
-                      );
-                    })}
+                    <div />
                   </div>
                 </div>
               </>
             )}
 
-            {/* MODO CREAR */}
+            {/* ================== MODO CREAR ================== */}
             {!isExistingSKU && (
               <>
+                {/* Nombre + Categoría */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm text-neutral-700 dark:text-neutral-300 mb-1">
@@ -1348,18 +1815,22 @@ const generateSKU = (name: string, categoriaId: number | string) => {
                     <input
                       type="text"
                       value={editingProduct?.name || ""}
-                      onChange={(e) =>{
-  const newName = e.target.value;
-  const newSku = generateSKU(newName, editingProduct?.categoria_id || "");
+                      onChange={(e) => {
+                        const newName = e.target.value;
+                        const newSku = generateSKU(
+                          newName,
+                          editingProduct?.categoria_id || ""
+                        );
                         setEditingProduct({
                           ...editingProduct,
-                          name: e.target.value,
+                          name: newName,
                           sku: newSku,
-                        })
+                        });
                       }}
-                      className="w-full border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
+                      className="w-full border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-green-500 outline-none"
                     />
                   </div>
+
                   <div>
                     <label className="block text-sm text-neutral-700 dark:text-neutral-300 mb-1">
                       Categoría
@@ -1367,19 +1838,20 @@ const generateSKU = (name: string, categoriaId: number | string) => {
                     <select
                       value={editingProduct?.categoria_id ?? ""}
                       onChange={(e) => {
-                        const catValue = e.target.value ? Number(e.target.value) : "";
-  const newSku = generateSKU(editingProduct?.name || "", catValue);
-                        
+                        const catValue = e.target.value
+                          ? Number(e.target.value)
+                          : "";
+                        const newSku = generateSKU(
+                          editingProduct?.name || "",
+                          catValue
+                        );
                         setEditingProduct({
                           ...editingProduct,
-                          categoria_id: e.target.value
-                          
-                            ? Number(e.target.value)
-                            : "",
-                          sku: newSku,  
-                        })
+                          categoria_id: catValue,
+                          sku: newSku,
+                        });
                       }}
-                      className="w-full border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
+                      className="w-full border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-green-500 outline-none"
                     >
                       <option value="">Seleccionar categoría</option>
                       {cats.map((c) => (
@@ -1390,96 +1862,100 @@ const generateSKU = (name: string, categoriaId: number | string) => {
                     </select>
                   </div>
                 </div>
-<div className="mt-3">
-  <label className="block text-sm text-neutral-700 dark:text-neutral-300 mb-1">
-    SKU (generado automáticamente)
-  </label>
-  <input
-    type="text"
-    readOnly
-    value={editingProduct?.sku || ""}
-    className="border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 w-60 bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-400 font-mono select-all"
-  />
-  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-    Se genera automáticamente según el nombre y la categoría.
-  </p>
-</div>
 
-
+                {/* SKU */}
                 <div className="mt-3">
                   <label className="block text-sm text-neutral-700 dark:text-neutral-300 mb-1">
-                    Precio base
+                    SKU (generado automáticamente)
                   </label>
                   <input
                     type="text"
-                    inputMode="numeric"
-                    className="border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 w-40 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
-                    value={String(editingProduct?.basePrice ?? 0)}
-                    onBeforeInput={(e) => {
-                      const el = e.currentTarget;
-                      const s = el.selectionStart ?? el.value.length;
-                      const en = el.selectionEnd ?? el.value.length;
-                      const d = (e as any).data ?? "";
-                      const p = el.value.slice(0, s) + d + el.value.slice(en);
-                      if (!/^\d*$/.test(p)) e.preventDefault();
-                    }}
-                    onPaste={(e) => {
-                      const t = (
-                        e.clipboardData || (window as any).clipboardData
-                      ).getData("text");
-                      if (!/^\d*$/.test(t)) e.preventDefault();
-                    }}
-                    onChange={(e) =>
-                      setEditingProduct({
-                        ...editingProduct,
-                        basePrice: Number(e.target.value || 0),
-                      })
-                    }
+                    readOnly
+                    value={editingProduct?.sku || ""}
+                    className="border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 w-60 bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-400 font-mono select-all"
                   />
+                  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                    Se genera automáticamente según el nombre y la categoría.
+                  </p>
+                </div>
+
+                {/* PRECIOS POR CANAL */}
+                <div className="grid grid-cols-3 gap-4 mt-5">
+                  {[
+                    { key: "priceb2b", label: "Precio B2B" },
+                    { key: "priceweb", label: "Precio Web" },
+                    { key: "priceml", label: "Precio ML" },
+                  ].map((field) => (
+                    <div key={field.key}>
+                      <label className="block text-sm text-neutral-700 dark:text-neutral-300 mb-1">
+                        {field.label}
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={String(
+                          (editingProduct as any)?.[field.key] ?? 0
+                        )}
+                        onBeforeInput={(e) => {
+                          const el = e.currentTarget;
+                          const s = el.selectionStart ?? el.value.length;
+                          const en = el.selectionEnd ?? el.value.length;
+                          const d = (e as any).data ?? "";
+                          const p =
+                            el.value.slice(0, s) + d + el.value.slice(en);
+                          if (!/^\d*$/.test(p)) e.preventDefault();
+                        }}
+                        onPaste={(e) => {
+                          const t = e.clipboardData.getData("text");
+                          if (!/^\d*$/.test(t)) e.preventDefault();
+                        }}
+                        onChange={(e) =>
+                          setEditingProduct((p: any) => ({
+                            ...p,
+                            [field.key]: Number(e.target.value || 0),
+                          }))
+                        }
+                        className="w-full border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-green-500 outline-none"
+                      />
+                    </div>
+                  ))}
                 </div>
 
                 {/* MATRIZ CREAR */}
-                <div className="mt-5 overflow-x-auto" style={{ minWidth: 480 }}>
+                <div className="mt-6 overflow-x-auto" style={{ minWidth: 480 }}>
                   {(() => {
                     const rawCatName =
                       cats.find(
                         (c) => c.id === Number(editingProduct?.categoria_id)
                       )?.name || "";
                     const catName = rawCatName.toLowerCase().trim();
+
+                    const isUnica = catName === "accesorios";
                     const usaNumericas =
                       catName === "pantalones" || catName === "shorts";
-                    const tipo: "alfanumerica" | "numerica" = usaNumericas
-                      ? "numerica"
-                      : "alfanumerica";
 
                     const cols = tallas
-                      .filter((t) => t.tipo === tipo)
+                      .filter((t) =>
+                        isUnica
+                          ? t.tipo === "unica"
+                          : usaNumericas
+                          ? t.tipo === "numerica"
+                          : t.tipo === "alfanumerica"
+                      )
                       .sort((a, b) =>
-                        tipo === "numerica"
+                        usaNumericas
                           ? (a.orden ?? 0) - (b.orden ?? 0)
                           : ALFA_ORDER.indexOf(a.etiqueta) -
                             ALFA_ORDER.indexOf(b.etiqueta)
                       );
 
-                    if (!editingProduct?.matrix) {
-                      const init: Record<
-                        number,
-                        { b2b: number; web: number; ml: number; price: number }
-                      > = {};
-                      cols.forEach((t) => {
-                        init[t.id] = {
-                          b2b: 0,
-                          web: 0,
-                          ml: 0,
-                          price: Number(editingProduct?.basePrice || 0),
-                        };
-                      });
-                      setEditingProduct((p: any) => ({ ...p, matrix: init }));
-                    }
+                    const visibleCols = isUnica
+                      ? cols
+                      : cols.filter((c) => visibleTallas.includes(c.etiqueta));
 
                     const setVal = (
                       tId: number,
-                      field: "b2b" | "web" | "ml" | "price",
+                      field: "b2b" | "web" | "ml",
                       val: string
                     ) => {
                       const n = Number((val || "0").replace(/[^\d]/g, ""));
@@ -1487,218 +1963,194 @@ const generateSKU = (name: string, categoriaId: number | string) => {
                         ...p,
                         matrix: {
                           ...p.matrix,
-                          [tId]: { ...p.matrix[tId], [field]: n },
+                          [tId]: {
+                            ...(p.matrix?.[tId] || { b2b: 0, web: 0, ml: 0 }),
+                            [field]: n,
+                          },
                         },
                       }));
                     };
 
-                    const gridTemplateColumns = `120px repeat(${cols.length}, minmax(72px, 1fr))`;
+                    const gridTemplateColumns = `120px repeat(${visibleCols.length}, minmax(72px, 1fr))`;
 
                     return (
-                      <div
-                        className="grid gap-y-2 gap-x-2 items-center text-sm"
-                        style={{ gridTemplateColumns }}
-                      >
-                        <div></div>
-                        {cols.map((t) => (
-                          <div
-                            key={t.id}
-                            className="text-center text-xs text-neutral-700 dark:text-neutral-300 font-medium"
-                          >
-                            {t.etiqueta}
-                          </div>
-                        ))}
-
-                        {/* B2B */}
-                        <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
-                            B2B
-                          </span>
-                        </div>
-                        {cols.map((t) => (
-                          <div key={t.id} className="text-center">
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
-                              value={String(
-                                editingProduct?.matrix?.[t.id]?.b2b ?? 0
-                              )}
-                              onBeforeInput={(e) => {
-                                const el = e.currentTarget;
-                                const s = el.selectionStart ?? el.value.length;
-                                const en = el.selectionEnd ?? el.value.length;
-                                const d = (e as any).data ?? "";
-                                const p =
-                                  el.value.slice(0, s) + d + el.value.slice(en);
-                                if (!/^\d*$/.test(p)) e.preventDefault();
-                              }}
-                              onPaste={(e) => {
-                                const t = (
-                                  e.clipboardData ||
-                                  (window as any).clipboardData
-                                ).getData("text");
-                                if (!/^\d*$/.test(t)) e.preventDefault();
-                              }}
-                              onChange={(e) =>
-                                setVal(t.id, "b2b", e.target.value)
-                              }
-                            />
-                          </div>
-                        ))}
-
-                        {/* Web */}
-                        <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
-                            Web
-                          </span>
-                        </div>
-                        {cols.map((t) => (
-                          <div key={t.id} className="text-center">
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
-                              value={String(
-                                editingProduct?.matrix?.[t.id]?.web ?? 0
-                              )}
-                              onBeforeInput={(e) => {
-                                const el = e.currentTarget;
-                                const s = el.selectionStart ?? el.value.length;
-                                const en = el.selectionEnd ?? el.value.length;
-                                const d = (e as any).data ?? "";
-                                const p =
-                                  el.value.slice(0, s) + d + el.value.slice(en);
-                                if (!/^\d*$/.test(p)) e.preventDefault();
-                              }}
-                              onPaste={(e) => {
-                                const t = (
-                                  e.clipboardData ||
-                                  (window as any).clipboardData
-                                ).getData("text");
-                                if (!/^\d*$/.test(t)) e.preventDefault();
-                              }}
-                              onChange={(e) =>
-                                setVal(t.id, "web", e.target.value)
-                              }
-                            />
-                          </div>
-                        ))}
-
-                        {/* ML */}
-                        <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
-                            ML
-                          </span>
-                        </div>
-                        {cols.map((t) => (
-                          <div key={t.id} className="text-center">
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
-                              value={String(
-                                editingProduct?.matrix?.[t.id]?.ml ?? 0
-                              )}
-                              onBeforeInput={(e) => {
-                                const el = e.currentTarget;
-                                const s = el.selectionStart ?? el.value.length;
-                                const en = el.selectionEnd ?? el.value.length;
-                                const d = (e as any).data ?? "";
-                                const p =
-                                  el.value.slice(0, s) + d + el.value.slice(en);
-                                if (!/^\d*$/.test(p)) e.preventDefault();
-                              }}
-                              onPaste={(e) => {
-                                const t = (
-                                  e.clipboardData ||
-                                  (window as any).clipboardData
-                                ).getData("text");
-                                if (!/^\d*$/.test(t)) e.preventDefault();
-                              }}
-                              onChange={(e) =>
-                                setVal(t.id, "ml", e.target.value)
-                              }
-                            />
-                          </div>
-                        ))}
-
-                        {/* TOTAL */}
-                        <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
-                            Total
-                          </span>
-                        </div>
-                        {cols.map((t) => {
-                          const v = editingProduct?.matrix?.[t.id] || {
-                            b2b: 0,
-                            web: 0,
-                            ml: 0,
-                          };
-                          const total =
-                            (v.b2b || 0) + (v.web || 0) + (v.ml || 0);
-                          const cls = getStockStatusClass(total);
-                          return (
-                            <div key={t.id} className="text-center">
-                              <span className={`font-semibold ${cls}`}>
-                                {total}
-                              </span>
+                      <>
+                        {!isUnica && (
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => addTallaLeft(cols)}
+                                className="px-2 py-1 rounded-lg text-xs bg-neutral-200 dark:bg-neutral-700 hover:bg-neutral-300 dark:hover:bg-neutral-600"
+                              >
+                                + izq
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeTallaLeft(cols)}
+                                className="px-2 py-1 rounded-lg text-xs bg-neutral-200 dark:bg-neutral-700 hover:bg-neutral-300 dark:hover:bg-neutral-600"
+                              >
+                                − izq
+                              </button>
                             </div>
-                          );
-                        })}
 
-                        {/* Precio */}
-                        <div className="text-right pr-2">
-                          <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200">
-                            Precio
-                          </span>
-                        </div>
-                        {cols.map((t) => (
-                          <div key={t.id} className="text-center">
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-neutral-500 outline-none"
-                              value={String(
-                                editingProduct?.matrix?.[t.id]?.price ??
-                                  editingProduct?.basePrice ??
-                                  0
-                              )}
-                              onBeforeInput={(e) => {
-                                const el = e.currentTarget;
-                                const s = el.selectionStart ?? el.value.length;
-                                const en = el.selectionEnd ?? el.value.length;
-                                const d = (e as any).data ?? "";
-                                const p =
-                                  el.value.slice(0, s) + d + el.value.slice(en);
-                                if (!/^\d*$/.test(p)) e.preventDefault();
-                              }}
-                              onPaste={(e) => {
-                                const t = (
-                                  e.clipboardData ||
-                                  (window as any).clipboardData
-                                ).getData("text");
-                                if (!/^\d*$/.test(t)) e.preventDefault();
-                              }}
-                              onChange={(e) =>
-                                setVal(t.id, "price", e.target.value)
-                              }
-                            />
+                            <span className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+                              Matriz de tallas
+                            </span>
+
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => addTallaRight(cols)}
+                                className="px-2 py-1 rounded-lg text-xs bg-neutral-200 dark:bg-neutral-700 hover:bg-neutral-300 dark:hover:bg-neutral-600"
+                              >
+                                + der
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeTallaRight(cols)}
+                                className="px-2 py-1 rounded-lg text-xs bg-neutral-200 dark:bg-neutral-700 hover:bg-neutral-300 dark:hover:bg-neutral-600"
+                              >
+                                − der
+                              </button>
+                            </div>
                           </div>
-                        ))}
-                      </div>
+                        )}
+
+                        <div
+                          className="grid gap-y-2 gap-x-2 items-center"
+                          style={{ gridTemplateColumns }}
+                        >
+                          {/* Encabezados */}
+                          <div></div>
+                          {visibleCols.map((t) => (
+                            <div
+                              key={t.id}
+                              className="text-center text-xs text-neutral-700 dark:text-neutral-300 font-medium"
+                            >
+                              {t.etiqueta}
+                            </div>
+                          ))}
+
+                          {/* B2B */}
+                          <div className="text-right pr-2">
+                            <span className="px-2 py-1 rounded text-xs font-semibold bg-fuchsia-100 text-fuchsia-700">
+                              B2B
+                            </span>
+                          </div>
+                          {visibleCols.map((t) => (
+                            <div key={t.id} className="text-center">
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                                value={String(
+                                  editingProduct?.matrix?.[t.id]?.b2b ?? 0
+                                )}
+                                onChange={(e) =>
+                                  setVal(t.id, "b2b", e.target.value)
+                                }
+                              />
+                            </div>
+                          ))}
+
+                          {/* Web */}
+                          <div className="text-right pr-2">
+                            <span className="px-2 py-1 rounded text-xs font-semibold bg-blue-100 text-blue-700">
+                              Web
+                            </span>
+                          </div>
+                          {visibleCols.map((t) => (
+                            <div key={t.id} className="text-center">
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                                value={String(
+                                  editingProduct?.matrix?.[t.id]?.web ?? 0
+                                )}
+                                onChange={(e) =>
+                                  setVal(t.id, "web", e.target.value)
+                                }
+                              />
+                            </div>
+                          ))}
+
+                          {/* ML */}
+                          <div className="text-right pr-2">
+                            <span className="px-2 py-1 rounded text-xs font-semibold bg-amber-100 text-amber-700">
+                              ML
+                            </span>
+                          </div>
+                          {visibleCols.map((t) => (
+                            <div key={t.id} className="text-center">
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                                value={String(
+                                  editingProduct?.matrix?.[t.id]?.ml ?? 0
+                                )}
+                                onChange={(e) =>
+                                  setVal(t.id, "ml", e.target.value)
+                                }
+                              />
+                            </div>
+                          ))}
+
+                          {/* Total */}
+                          <div className="text-right pr-2">
+                            <span className="px-2 py-1 rounded text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300">
+                              Total
+                            </span>
+                          </div>
+                          {visibleCols.map((t) => {
+                            const v = editingProduct?.matrix?.[t.id] || {
+                              b2b: 0,
+                              web: 0,
+                              ml: 0,
+                            };
+                            const total = v.b2b + v.web + v.ml;
+                            const cls = getStockStatusClass(total);
+                            return (
+                              <div key={t.id} className="text-center">
+                                <span className={`font-semibold ${cls}`}>
+                                  {total}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
                     );
                   })()}
                 </div>
               </>
             )}
+
+            {/* BOTONES GUARDAR/CANCELAR */}
             <div className="mt-4 flex gap-2">
               <button
-                onClick={saveProduct}
-                className="bg-green-600 text-white px-4 py-2 rounded"
+                onClick={!saving ? saveProduct : undefined}
+                disabled={saving}
+                className={`px-4 py-2 rounded text-white flex items-center justify-center gap-2 ${
+                  saving
+                    ? "bg-green-400 cursor-not-allowed"
+                    : "bg-green-600 hover:bg-green-700"
+                }`}
               >
-                {isExistingSKU ? "Guardar cambios" : "Guardar producto"}
+                {saving ? (
+                  <>
+                    <span className="animate-spin border-2 border-white border-t-transparent rounded-full w-4 h-4" />
+                    Guardando...
+                  </>
+                ) : isExistingSKU ? (
+                  "Guardar cambios"
+                ) : (
+                  "Guardar producto"
+                )}
               </button>
+
               <button
                 onClick={() => {
                   setShowModal(false);
