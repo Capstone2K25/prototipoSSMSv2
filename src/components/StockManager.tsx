@@ -458,26 +458,34 @@ export const StockManager = () => {
       };
     });
   };
-  async function uploadFileToStorage(file: File, sku: string): Promise<string> {
+  async function uploadFileToStorage(
+    file: File,
+    sku: string,
+    index: number
+  ): Promise<string> {
     const bucket = "product_images";
+
     const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
     const safeSku = sku.replace(/[^a-zA-Z0-9-_]/g, "_");
 
-    const path = `${safeSku}/${Date.now()}.${ext}`;
+    // 🔥 nombre correcto del archivo
+    const fileName = `${safeSku}_${index}.${ext}`;
+
+    // 🔥 ruta en el bucket
+    const path = `${safeSku}/${fileName}`;
 
     const { error: upErr } = await supabase.storage
       .from(bucket)
       .upload(path, file, {
-        cacheControl: "3600",
         upsert: true,
-        contentType: file.type || "image/jpeg",
+        cacheControl: "3600",
+        contentType: file.type,
       });
 
     if (upErr) throw upErr;
 
-    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-
-    return data.publicUrl;
+    // 🔥 retornamos solo el nombre (NO URL)
+    return fileName;
   }
 
   // diccionarios
@@ -803,13 +811,19 @@ export const StockManager = () => {
     const allCols = columnsForFam(fam);
 
     // 👇 Solo las tallas que REALMENTE existen en BD para esta familia
-    const existingCols = allCols.filter((t) => !!fam.byTalla[t.id]);
-    // Si categoría es gorros o accesorios → SOLO Única
-    const catName = (catById[fam.categoria_id] || "").toLowerCase().trim();
-    if (catName === "gorros" || catName === "accesorios") {
-      const unica = tallas.find((t) => t.tipo === "unica");
-      existingCols = unica ? [unica] : [];
-    }
+// Solo las tallas que realmente existen en BD
+let existingCols = allCols.filter((t) => !!fam.byTalla[t.id]);
+
+// 🔥 Obtener categoría correctamente
+const catName =
+  catById[fam.categoria_id]?.toLowerCase().trim() || "";
+
+// Si la categoría es gorros o accesorios → usar Única
+if (catName === "gorros" || catName === "accesorios") {
+  const unica = tallas.find((t) => t.tipo === "unica");
+  existingCols = unica ? [unica] : [];
+}
+
 
     const values: EditFamilyState["values"] = {};
 
@@ -1067,13 +1081,21 @@ export const StockManager = () => {
           }
         }
         if (productImages.length > 0 && editingFamily.sku) {
-          const file = productImages[0]; // solo guardamos primera
-          const url = await uploadFileToStorage(file, editingFamily.sku);
+          try {
+            const file = productImages[0];
+            const fileName = await uploadFileToStorage(
+              file,
+              editingFamily.sku,
+              1
+            );
 
-          await supabase
-            .from("productos")
-            .update({ image_filename: url })
-            .eq("sku", editingFamily.sku);
+            await supabase
+              .from("productos")
+              .update({ image_filename: fileName })
+              .eq("sku", editingFamily.sku);
+          } catch (err) {
+            console.error("Error subiendo imagen en editar:", err);
+          }
         }
 
         /* 4) SYNC WOO + B2B */
@@ -1185,20 +1207,16 @@ export const StockManager = () => {
 
         // ⬇️ NUEVO: subir imagen y guardar image_filename
         if (productImages.length > 0 && sku) {
-          const file = productImages[0]; // principal
           try {
-            const url = await uploadFileToStorage(file, sku);
+            const file = productImages[0];
+            const fileName = await uploadFileToStorage(file, sku, 1);
 
             await supabase
               .from("productos")
-              .update({ image_filename: url })
+              .update({ image_filename: fileName })
               .eq("sku", sku);
           } catch (err) {
             console.error("Error subiendo imagen:", err);
-            toastAndLog(
-              "El producto se creó, pero hubo un error subiendo la imagen.",
-              "error"
-            );
           }
         }
 
@@ -1332,7 +1350,7 @@ export const StockManager = () => {
       catById[editingFamily?.categoria_id]?.toLowerCase().trim() || "";
 
     const usaNumericas = catName === "pantalones" || catName === "shorts";
-   const isUnica = catName === "accesorios" || catName === "gorros";
+    const isUnica = catName === "accesorios" || catName === "gorros";
 
     const filtered = tallas.filter((t) =>
       isUnica
@@ -1515,7 +1533,8 @@ export const StockManager = () => {
                 priceml: 0,
                 matrix: undefined,
               });
-
+              setProductImages([]);
+setImagePreviews([]);
               setVisibleTallas(["S", "M", "L", "XL"]);
               setShowModal(true);
               setIsExistingSKU(false);
@@ -1665,6 +1684,8 @@ export const StockManager = () => {
                 setEditingProduct(null);
                 setEditingFamily(null);
                 setIsExistingSKU(false);
+                  setProductImages([]);
+  setImagePreviews([]);
               }}
             >
               <X size={20} />
@@ -1944,11 +1965,17 @@ export const StockManager = () => {
                           editingProduct?.name || "",
                           catValue
                         );
+
+                        // 🔥 RESET COMPLETO AL CAMBIAR CATEGORÍA
                         setEditingProduct({
                           ...editingProduct,
                           categoria_id: catValue,
                           sku: newSku,
+                          matrix: {}, // ← << BORRAMOS TODAS LAS TALLAS Y SUS VALORES >>
                         });
+
+                        // 🔥 LIMPIAMOS TALLAS VISIBLES TAMBIÉN
+                        setVisibleTallas([]);
                       }}
                       className="w-full border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white focus:ring-2 focus:ring-green-500 outline-none"
                     >
@@ -2029,7 +2056,8 @@ export const StockManager = () => {
                       )?.name || "";
                     const catName = rawCatName.toLowerCase().trim();
 
-                   const isUnica = catName === "accesorios" || catName === "gorros";
+                    const isUnica =
+                      catName === "accesorios" || catName === "gorros";
                     const usaNumericas =
                       catName === "pantalones" || catName === "shorts";
 
@@ -2317,6 +2345,8 @@ export const StockManager = () => {
                   setEditingProduct(null);
                   setEditingFamily(null);
                   setIsExistingSKU(false);
+                    setProductImages([]);
+  setImagePreviews([]);
                 }}
                 className="border px-4 py-2 rounded"
               >
