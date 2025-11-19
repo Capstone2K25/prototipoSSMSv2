@@ -1676,7 +1676,8 @@ setImagePreviews([]);
       {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/60 flex items-center justify-center z-50 p-4 transition-colors">
-          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-2xl shadow-2xl w-full max-w-5xl relative p-6 transition-all">
+       <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-2xl shadow-2xl w-full max-w-5xl relative p-6 transition-all max-h-[90vh] overflow-y-auto">
+
             <button
               className="absolute top-4 right-4 text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-white transition"
               onClick={() => {
@@ -2265,9 +2266,10 @@ setImagePreviews([]);
                 <div className="grid grid-cols-3 gap-3 mb-3">
                   {imagePreviews.map((src, i) => (
                     <div
-                      key={i}
-                      className="relative w-full aspect-square rounded-lg overflow-hidden border border-neutral-300 dark:border-neutral-600"
-                    >
+  key={i}
+  className="relative w-64 h-64 rounded-lg overflow-hidden border border-neutral-300 dark:border-neutral-600 flex-shrink-0"
+>
+
                       <img
                         src={src}
                         className="w-full h-full object-cover"
