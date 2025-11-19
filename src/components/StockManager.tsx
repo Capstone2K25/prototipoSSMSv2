@@ -13,18 +13,6 @@ import {
 import toast from "react-hot-toast";
 import { supabase } from "../supabaseClient";
 import { emitAlert } from "../state/alertsBus";
-import {
-  wooCreateProductLocal,
-  wooDeleteProductLocal,
-  wooPushStockLocal,
-  wooUpdateProductLocal,
-} from "../data/woo";
-// B2B UPDATE
-import {
-  b2bCreateProductLocal,
-  b2bDeleteProductLocal,
-  b2bUpdateProductLocal,
-} from "../data/b2b";
 
 type LookupCat = { id: number; name: string };
 type LookupTal = {
@@ -154,12 +142,6 @@ const FamCard = ({
                     const items = Object.values(fam.byTalla);
                     const ids = items.map((p) => p.id);
                     const skus = items.map((p) => String(p.sku));
-
-                    // Eliminamos en Woo + B2B
-                    await Promise.allSettled([
-                      ...skus.map((s) => wooDeleteProductLocal(s)),
-                      ...skus.map((s) => b2bDeleteProductLocal(s)),
-                    ]);
 
                     // Eliminamos en BD
                     const { error } = await supabase
@@ -725,13 +707,6 @@ export const StockManager = () => {
     const selectedProducts = products.filter((p) => selectedIds.includes(p.id));
     const skus = selectedProducts.map((p) => String(p.sku));
 
-    // B2B UPDATE
-    const results = await Promise.allSettled([
-      ...skus.map((sku) => wooDeleteProductLocal(sku)),
-      ...skus.map((sku) => b2bDeleteProductLocal(sku)), // <-- AÑADIDO
-    ]);
-    const okWoo = results.filter((r) => r.status === "fulfilled").length;
-    const failWoo = results.length - okWoo;
 
     const { error } = await supabase
       .from("productos")
@@ -745,18 +720,6 @@ export const StockManager = () => {
       );
       return;
     }
-
-    selectedProducts.forEach((p) =>
-      emitAlert({
-        type: "error",
-        message: `Producto eliminado: ${p.name} (SKU ${p.sku})`,
-        channel: "stock",
-      })
-    );
-    toast.success(
-      `Eliminados ${selectedIds.length} en BD. Woo: ${okWoo} ok / ${failWoo} fallo(s).`
-    );
-
     setSelectedIds([]);
     fetchProducts({ silent: true });
   };
@@ -1022,14 +985,6 @@ if (catName === "gorros" || catName === "accesorios") {
           );
           const skusToDelete = prodsToDelete.map((p) => String(p.sku || ""));
 
-          // Woo + B2B best-effort
-          try {
-            await Promise.allSettled([
-              ...skusToDelete.map((s) => wooDeleteProductLocal(s)),
-              ...skusToDelete.map((s) => b2bDeleteProductLocal(s)),
-            ]);
-          } catch {}
-
           const { error: delError } = await supabase
             .from("productos")
             .delete()
@@ -1097,48 +1052,6 @@ if (catName === "gorros" || catName === "accesorios") {
             console.error("Error subiendo imagen en editar:", err);
           }
         }
-
-        /* 4) SYNC WOO + B2B */
-        try {
-          await Promise.allSettled([
-            // updates
-            ...updates.map((u) => {
-              const p = products.find((pp) => pp.id === u.id);
-              if (!p?.sku) return Promise.resolve();
-
-              return Promise.allSettled([
-                wooUpdateProductLocal({
-                  skuLocal: String(p.sku),
-                  price: Number(u.priceweb),
-                  absoluteStockWeb: Number(u.stockweb),
-                }),
-                b2bUpdateProductLocal({
-                  skuLocal: String(p.sku),
-                  price: Number(u.priceb2b),
-                  absoluteStockB2b: Number(u.stockb2b),
-                }),
-              ]);
-            }),
-
-            // nuevas
-            ...createdRows.map((row) =>
-              Promise.allSettled([
-                wooCreateProductLocal({
-                  skuLocal: row.sku,
-                  name: row.name,
-                  price: Number(row.priceweb || row.price || 0),
-                  initialStockWeb: Number(row.stockweb || 0),
-                }),
-                b2bCreateProductLocal({
-                  skuLocal: row.sku,
-                  name: row.name,
-                  price: Number(row.priceb2b || row.price || 0),
-                  initialStockB2b: Number(row.stockb2b || 0),
-                }),
-              ])
-            ),
-          ]);
-        } catch {}
 
         const msg: string[] = [];
         if (updates.length) msg.push(`Actualizadas ${updates.length}`);
@@ -1220,27 +1133,7 @@ if (catName === "gorros" || catName === "accesorios") {
           }
         }
 
-        try {
-          await Promise.allSettled([
-            ...data.map((row: any) =>
-              wooCreateProductLocal({
-                skuLocal: row.sku,
-                name: row.name,
-                price: Number(row.price),
-                initialStockWeb: Number(row.stockweb),
-              })
-            ),
 
-            ...data.map((row: any) =>
-              b2bCreateProductLocal({
-                skuLocal: row.sku,
-                name: row.name,
-                price: Number(row.priceb2b || row.price),
-                initialStockB2b: Number(row.stockb2b),
-              })
-            ),
-          ]);
-        } catch {}
 
         toastAndLog(`Creadas ${rows.length} talla(s).`, "sync");
       }

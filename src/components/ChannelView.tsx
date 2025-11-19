@@ -776,7 +776,7 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
       });
     }
 
-    // 
+    //
 
     // COLOR (si aplica)
     if (requiresColor(safeDraft.category_id)) {
@@ -836,177 +836,200 @@ export const ChannelView = ({ channel }: ChannelViewProps) => {
   }
   // ===== Publicar toda la familia (variaciones) =====
   // ===== Publicar toda la familia (variaciones) =====
-async function publishFamily(fam: FamRow | any) {
-  if (!connected) {
-    alert("Mercado Libre desconectado");
-    return;
-  }
+  async function publishFamily(fam: FamRow | any) {
+    if (!connected) {
+      alert("Mercado Libre desconectado");
+      return;
+    }
 
-  try {
-    setRowBusy(fam.name || fam.title || "publicación");
+    try {
+      setRowBusy(fam.name || fam.title || "publicación");
 
-    const catId = fam.category_id || getMeliCategory(fam.categoria_id ?? null);
+      const catId =
+        fam.category_id || getMeliCategory(fam.categoria_id ?? null);
 
-    // 1) Forzar guía por categoría si existe
-    const forcedGuide = CATEGORY_GUIDE_MAP[catId] || "";
-    const requiresGrid = Boolean(forcedGuide);
+      // 1) Forzar guía por categoría si existe
+      const forcedGuide = CATEGORY_GUIDE_MAP[catId] || "";
+      const requiresGrid = Boolean(forcedGuide);
 
-    const variations: any[] = [];
+      const variations: any[] = [];
 
-    // 2) Variaciones por talla (usar talla real, NO sku)
-    for (const p of Object.values(fam.byTalla || {})) {
-      // obtener la talla (LookupTal) del producto
-      const t = tallasById.get(p.talla_id || -1);
-      const tipo: "alfanumerica" | "numerica" = (t?.tipo || "alfanumerica") as any;
+      // 2) Variaciones por talla (usar talla real, NO sku)
+      for (const p of Object.values(fam.byTalla || {})) {
+        // obtener la talla (LookupTal) del producto
+        const t = tallasById.get(p.talla_id || -1);
+        const tipo: "alfanumerica" | "numerica" = (t?.tipo ||
+          "alfanumerica") as any;
 
-      // etiqueta normalizada igual que en tu lógica de "single post"
-      const etiqueta_norm =
-        tipo === "numerica"
-          ? String(t?.orden ?? t?.etiqueta ?? "").trim()
-          : String(t?.etiqueta || "").toUpperCase().replace(/\s+/g, "");
+        // etiqueta normalizada igual que en tu lógica de "single post"
+        const etiqueta_norm =
+          tipo === "numerica"
+            ? String(t?.orden ?? t?.etiqueta ?? "").trim()
+            : String(t?.etiqueta || "")
+                .toUpperCase()
+                .replace(/\s+/g, "");
 
-      // buscar mapeo en meli_size_map (filtrando por categoría, tipo y etiqueta_norm)
-      const { data: map, error: mapErr } = await supabase
-        .from("meli_size_map")
-        .select("size_grid_id,size_grid_row_id,size_value")
-        .eq("categoria_ml_id", catId)
-        .eq("talla_tipo", tipo)
-        .eq("etiqueta_norm", etiqueta_norm)
-        .maybeSingle();
+        // buscar mapeo en meli_size_map (filtrando por categoría, tipo y etiqueta_norm)
+        const { data: map, error: mapErr } = await supabase
+          .from("meli_size_map")
+          .select("size_grid_id,size_grid_row_id,size_value")
+          .eq("categoria_ml_id", catId)
+          .eq("talla_tipo", tipo)
+          .eq("etiqueta_norm", etiqueta_norm)
+          .maybeSingle();
 
-      if (requiresGrid) {
-        // obligatoria la fila de guía
-        if (!map?.size_grid_id || !map?.size_grid_row_id || !map?.size_value) {
-          console.error("No hay fila de guía para", { catId, tipo, etiqueta_norm, mapErr });
-          continue; // saltar esta variación sin grid válido
+        if (requiresGrid) {
+          // obligatoria la fila de guía
+          if (
+            !map?.size_grid_id ||
+            !map?.size_grid_row_id ||
+            !map?.size_value
+          ) {
+            console.error("No hay fila de guía para", {
+              catId,
+              tipo,
+              etiqueta_norm,
+              mapErr,
+            });
+            continue; // saltar esta variación sin grid válido
+          }
+          // asegurar que coincida la guía forzada
+          if (String(map.size_grid_id) !== String(forcedGuide)) {
+            console.warn("Fila no corresponde a guía forzada", {
+              forcedGuide,
+              got: map.size_grid_id,
+              row: map.size_grid_row_id,
+            });
+            continue;
+          }
         }
-        // asegurar que coincida la guía forzada
-        if (String(map.size_grid_id) !== String(forcedGuide)) {
-          console.warn("Fila no corresponde a guía forzada", {
-            forcedGuide, got: map.size_grid_id, row: map.size_grid_row_id
+
+        const attrs: any[] = [];
+        // === GENDER (válido para Mercado Libre Chile)
+
+        // === FASHION GRID (cuando aplica) ===
+        if (requiresGrid) {
+          attrs.push(
+            {
+              id: "SIZE",
+              value_name: map.size_value, // "M" o "42"
+              value_id: map.size_grid_row_id, // "3947xxx:5"
+            },
+            {
+              id: "SIZE_GRID_ID",
+              value_name: String(map.size_grid_id), // "3947xxx"
+              value_id: String(map.size_grid_id), // "3947xxx"
+            },
+            {
+              id: "SIZE_GRID_ROW_ID",
+              value_name: map.size_grid_row_id, // "3947xxx:5"
+              value_id: map.size_grid_row_id, // "3947xxx:5"
+            }
+          );
+        }
+
+        // === Atributos comunes requeridos por estas categorías ===
+        // AGE_GROUP (adulto) sólo si aplica a la categoría de indumentaria
+
+        // === GENDER (solo si la categoría lo admite)
+        const CATEGORIES_WITH_GENDER = new Set([
+          "MLC158467", // Poleras
+          "MLC158382", // Polerones
+          "MLC158340", // Chaquetas
+        ]);
+        if (CATEGORIES_WITH_GENDER.has(catId)) {
+          const GENDER_MAP: Record<
+            string,
+            { value_id: string; value_name: string }
+          > = {
+            male: { value_id: "110461", value_name: "Hombre" },
+            female: { value_id: "110462", value_name: "Mujer" },
+            unisex: { value_id: "110463", value_name: "Unisex" },
+          };
+          const g = GENDER_MAP[fam.gender || "unisex"];
+          attrs.push({
+            id: "GENDER",
+            value_id: g.value_id,
+            value_name: g.value_name,
           });
-          continue;
         }
+
+        // COLOR si el usuario lo definió en el modal
+        if (fam.color) attrs.push({ id: "COLOR", value_name: fam.color });
+
+        // GARMENT_TYPE o PANT_TYPE según categoría
+        const GARMENT_TYPE_MAP: Record<string, string> = {
+          MLC158467: "Remera",
+          MLC158382: "Polerón",
+          MLC158340: "Chaqueta",
+        };
+        const PANT_TYPE_MAP: Record<string, string> = {
+          MLC158583: "Jeans",
+          MLC417372: "Shorts",
+        };
+        if (GARMENT_TYPE_MAP[catId]) {
+          attrs.push({
+            id: "GARMENT_TYPE",
+            value_name: GARMENT_TYPE_MAP[catId],
+          });
+        }
+        if (PANT_TYPE_MAP[catId]) {
+          attrs.push({ id: "PANT_TYPE", value_name: PANT_TYPE_MAP[catId] });
+          // si quieres también MAIN_MATERIAL por consistencia con “single post”, agrégalo aquí
+          // attrs.push({ id: "MAIN_MATERIAL", value_name: fam.mainMaterial || "Algodón" });
+        }
+
+        // === Variación final ===
+        variations.push({
+          attribute_combinations: attrs.filter((a) => a.id === "SIZE"),
+          attributes: attrs,
+          available_quantity: Number(p.stockml) || 0,
+          price: Number(p.price) || 0,
+          seller_custom_field: p.sku,
+        });
       }
 
-      const attrs: any[] = [];
-// === GENDER (válido para Mercado Libre Chile)
+      if (variations.length === 0) {
+        alert("No hay tallas con grid válido o con stock para publicar.");
+        return;
+      }
 
-      // === FASHION GRID (cuando aplica) ===
-      if (requiresGrid) {
-        attrs.push(
-          {
-            id: "SIZE",
-            value_name: map.size_value,              // "M" o "42"
-            value_id: map.size_grid_row_id,          // "3947xxx:5"
+      // 3) Validación: al menos 1 imagen (recomendado por ML)
+      const pictures = Array.isArray(fam.pictures)
+        ? fam.pictures.filter(Boolean)
+        : [];
+      if (pictures.length === 0) {
+        console.warn("Publicando sin imágenes; ML puede rechazar/penalizar.");
+      }
+
+      // === Llamada al endpoint ===
+      const { data, error } = await supabase.functions.invoke(
+        "meli-post-family",
+        {
+          body: {
+            title: fam.title || fam.name,
+            category_id: catId,
+            variations,
+            pictures, // <-- ahora sí
           },
-          {
-            id: "SIZE_GRID_ID",
-            value_name: String(map.size_grid_id),    // "3947xxx"
-            value_id: String(map.size_grid_id),      // "3947xxx"
-          },
-          {
-            id: "SIZE_GRID_ROW_ID",
-            value_name: map.size_grid_row_id,        // "3947xxx:5"
-            value_id: map.size_grid_row_id,          // "3947xxx:5"
-          },
-        );
+        }
+      );
+
+      if (error || !(data as any)?.ok) {
+        alert("Error al publicar familia.");
+        console.error(error || data);
+        return;
       }
 
-      // === Atributos comunes requeridos por estas categorías ===
-      // AGE_GROUP (adulto) sólo si aplica a la categoría de indumentaria
-
-
-// === GENDER (solo si la categoría lo admite)
-const CATEGORIES_WITH_GENDER = new Set([
-  "MLC158467", // Poleras
-  "MLC158382", // Polerones
-  "MLC158340", // Chaquetas
-]);
-if (CATEGORIES_WITH_GENDER.has(catId)) {
-  const GENDER_MAP: Record<string, { value_id: string; value_name: string }> = {
-    male: { value_id: "110461", value_name: "Hombre" },
-    female: { value_id: "110462", value_name: "Mujer" },
-    unisex: { value_id: "110463", value_name: "Unisex" },
-  };
-  const g = GENDER_MAP[fam.gender || "unisex"];
-  attrs.push({
-    id: "GENDER",
-    value_id: g.value_id,
-    value_name: g.value_name,
-  });
-}
-
-
-      // COLOR si el usuario lo definió en el modal
-      if (fam.color) attrs.push({ id: "COLOR", value_name: fam.color });
-
-      // GARMENT_TYPE o PANT_TYPE según categoría
-      const GARMENT_TYPE_MAP: Record<string, string> = {
-        MLC158467: "Remera",
-        MLC158382: "Polerón",
-        MLC158340: "Chaqueta",
-      };
-      const PANT_TYPE_MAP: Record<string, string> = {
-        MLC158583: "Jeans",
-        MLC417372: "Shorts",
-      };
-      if (GARMENT_TYPE_MAP[catId]) {
-        attrs.push({ id: "GARMENT_TYPE", value_name: GARMENT_TYPE_MAP[catId] });
-      }
-      if (PANT_TYPE_MAP[catId]) {
-        attrs.push({ id: "PANT_TYPE", value_name: PANT_TYPE_MAP[catId] });
-        // si quieres también MAIN_MATERIAL por consistencia con “single post”, agrégalo aquí
-        // attrs.push({ id: "MAIN_MATERIAL", value_name: fam.mainMaterial || "Algodón" });
-      }
-
-      // === Variación final ===
-      variations.push({
-        attribute_combinations: attrs.filter((a) => a.id === "SIZE"),
-        attributes: attrs,
-        available_quantity: Number(p.stockml) || 0,
-        price: Number(p.price) || 0,
-        seller_custom_field: p.sku,
-      });
+      alert("Familia publicada correctamente 🎉");
+      await handleSyncAll();
+    } catch (e) {
+      console.error("publishFamily error:", e);
+      alert("Error publicando familia.");
+    } finally {
+      setRowBusy(null);
     }
-
-    if (variations.length === 0) {
-      alert("No hay tallas con grid válido o con stock para publicar.");
-      return;
-    }
-
-    // 3) Validación: al menos 1 imagen (recomendado por ML)
-    const pictures = Array.isArray(fam.pictures) ? fam.pictures.filter(Boolean) : [];
-    if (pictures.length === 0) {
-      console.warn("Publicando sin imágenes; ML puede rechazar/penalizar.");
-    }
-
-    // === Llamada al endpoint ===
-    const { data, error } = await supabase.functions.invoke("meli-post-family", {
-      body: {
-        title: fam.title || fam.name,
-        category_id: catId,
-        variations,
-        pictures, // <-- ahora sí
-      },
-    });
-
-    if (error || !(data as any)?.ok) {
-      alert("Error al publicar familia.");
-      console.error(error || data);
-      return;
-    }
-
-    alert("Familia publicada correctamente 🎉");
-    await handleSyncAll();
-  } catch (e) {
-    console.error("publishFamily error:", e);
-    alert("Error publicando familia.");
-  } finally {
-    setRowBusy(null);
   }
-}
-
 
   // Subir imagen a Storage (pública)
   async function uploadFileToStorage(file: File): Promise<string> {
@@ -1034,7 +1057,7 @@ if (CATEGORIES_WITH_GENDER.has(catId)) {
     try {
       setRowBusy(p.sku);
       if (!connected) throw new Error("Mercado Libre desconectado");
-      if (isSkuPublished(p.sku)) {
+      if (isSkuPublished(familySku)) {
         await handleSyncAll();
         alert("Estado sincronizado");
       } else {
@@ -1244,12 +1267,12 @@ if (CATEGORIES_WITH_GENDER.has(catId)) {
                     {/* Estado pequeño arriba */}
                     <div className="flex justify-end">
                       {(() => {
-                        const allPublished = Object.values(
-                          fam.byTalla || {}
-                        ).every((p) => isSkuPublished(p.sku));
-                        const partiallyPublished = Object.values(
-                          fam.byTalla || {}
-                        ).some((p) => isSkuPublished(p.sku));
+                        const familySku =
+                          Object.values(fam.byTalla)[0]?.sku || null;
+
+                        const allPublished =
+                          familySku && isSkuPublished(familySku);
+                        const partiallyPublished = false; // NO EXISTE parcial con 1 SKU
 
                         if (allPublished) {
                           return (
