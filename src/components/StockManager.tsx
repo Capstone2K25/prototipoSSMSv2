@@ -269,6 +269,9 @@ const FamCard = ({
 };
 
 export const StockManager = () => {
+  // IMÁGENES PARA MODO CREAR
+  const [newProductImages, setNewProductImages] = useState<string[]>([]);
+
   // datos
   const [products, setProducts] = useState<Product[]>([]);
   const [totalRows, setTotalRows] = useState<number>(0);
@@ -438,6 +441,9 @@ export const StockManager = () => {
       };
     });
   };
+  // Para modo CREAR: almacenar imágenes temporales
+  const [productImages, setProductImages] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
 
   // Quitar talla derecha
   const removeTallaRight_edit = () => {
@@ -452,6 +458,27 @@ export const StockManager = () => {
       };
     });
   };
+  async function uploadFileToStorage(file: File, sku: string): Promise<string> {
+    const bucket = "product_images";
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+    const safeSku = sku.replace(/[^a-zA-Z0-9-_]/g, "_");
+
+    const path = `${safeSku}/${Date.now()}.${ext}`;
+
+    const { error: upErr } = await supabase.storage
+      .from(bucket)
+      .upload(path, file, {
+        cacheControl: "3600",
+        upsert: true,
+        contentType: file.type || "image/jpeg",
+      });
+
+    if (upErr) throw upErr;
+
+    const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+
+    return data.publicUrl;
+  }
 
   // diccionarios
   const catById = useMemo(
@@ -556,30 +583,27 @@ export const StockManager = () => {
       "";
     const catName = rawCatName.toLowerCase().trim();
 
-    let initial: string[];
-
-    if (catName === "accesorios") {
-      initial = ["Única"];
-    } else if (catName === "pantalones" || catName === "shorts") {
-      initial = ["40", "42", "44", "46"];
-    } else {
-      initial = ["S", "M", "L", "XL"];
+    // GORROS y ACCESORIOS = TALLA ÚNICA
+    if (catName === "gorros" || catName === "accesorios") {
+      setVisibleTallas(["Única"]);
+      return;
     }
 
-    setVisibleTallas((prev) => {
-      // primera vez → usa iniciales
-      if (!prev.length) return initial;
+    // Pantalones / Shorts → primeras 4 numéricas
+    if (catName === "pantalones" || catName === "shorts") {
+      const numeric = tallas
+        .filter((t) => t.tipo === "numerica")
+        .sort((a, b) => (a.valor_numerico ?? 0) - (b.valor_numerico ?? 0))
+        .map((t) => t.etiqueta);
 
-      // filtrar por tallas válidas segun la tabla "tallas"
-      const allLabels = tallas.map((t) => t.etiqueta);
-      const stillValid = prev.filter((et) => allLabels.includes(et));
+      setVisibleTallas(numeric.slice(0, 4));
+      return;
+    }
 
-      // si al cambiar categoría las anteriores ya no sirven, reset
-      if (!stillValid.length) return initial;
-
-      return stillValid;
-    });
+    // Todas las demás categorías → alfanuméricas
+    setVisibleTallas(["XS", "S", "M", "L"]);
   }, [showModal, isExistingSKU, editingProduct?.categoria_id, cats, tallas]);
+
   const addTallaLeft = (cols: { etiqueta: string }[]) => {
     setVisibleTallas((prev) => {
       if (!cols.length) return prev;
@@ -780,6 +804,12 @@ export const StockManager = () => {
 
     // 👇 Solo las tallas que REALMENTE existen en BD para esta familia
     const existingCols = allCols.filter((t) => !!fam.byTalla[t.id]);
+    // Si categoría es gorros o accesorios → SOLO Única
+    const catName = (catById[fam.categoria_id] || "").toLowerCase().trim();
+    if (catName === "gorros" || catName === "accesorios") {
+      const unica = tallas.find((t) => t.tipo === "unica");
+      existingCols = unica ? [unica] : [];
+    }
 
     const values: EditFamilyState["values"] = {};
 
@@ -808,7 +838,7 @@ export const StockManager = () => {
       name: fam.name,
       categoria_id: fam.categoria_id,
       tipo: fam.tipo,
-   sku: firstProd?.sku ?? "",   
+      sku: firstProd?.sku ?? "",
       cols: existingCols, // 👈 solo las tallas con producto
       values,
       basePrice,
@@ -841,6 +871,41 @@ export const StockManager = () => {
   const [saving, setSaving] = useState(false);
 
   /* ========================= GUARDAR PRODUCTO ========================= */
+  // ==========================
+  // SUBIR VARIAS IMÁGENES A SUPABASE
+  // ==========================
+  const uploadProductImages = async (sku: string, files: File[]) => {
+    if (!files.length) return [];
+
+    const uploadedUrls: string[] = [];
+
+    for (const file of files) {
+      const ext = file.name.split(".").pop();
+      const filePath = `${sku}/${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2)}.${ext}`;
+
+      const { data, error } = await supabase.storage
+        .from("product_images")
+        .upload(filePath, file, {
+          cacheControl: "3600",
+          upsert: false,
+        });
+
+      if (error) {
+        console.error("Error al subir imagen:", error);
+        continue;
+      }
+
+      const publicUrl = supabase.storage
+        .from("product_images")
+        .getPublicUrl(filePath).data.publicUrl;
+
+      uploadedUrls.push(publicUrl);
+    }
+
+    return uploadedUrls;
+  };
 
   const saveProduct = async () => {
     setSaving(true);
@@ -1001,6 +1066,15 @@ export const StockManager = () => {
             createdRows = data ?? [];
           }
         }
+        if (productImages.length > 0 && editingFamily.sku) {
+          const file = productImages[0]; // solo guardamos primera
+          const url = await uploadFileToStorage(file, editingFamily.sku);
+
+          await supabase
+            .from("productos")
+            .update({ image_filename: url })
+            .eq("sku", editingFamily.sku);
+        }
 
         /* 4) SYNC WOO + B2B */
         try {
@@ -1071,21 +1145,30 @@ export const StockManager = () => {
             const total = b2b + web + ml;
             if (total === 0) return null;
 
+            // 🔥 FORZAR TALLA ÚNICA PARA GORROS Y ACCESORIOS
+            let tallaId = Number(tId);
+            const catNameLower = (selectedCatName || "").toLowerCase().trim();
+
+            if (catNameLower === "accesorios" || catNameLower === "gorros") {
+              const unica = tallas.find((t) => t.tipo === "unica");
+              tallaId = unica?.id ?? tallaId;
+            }
+
             return {
               name,
-              sku, // 👈 MUY IMPORTANTE
+              sku,
               categoria_id,
-              talla_id: Number(tId),
+              talla_id: tallaId, // ← AQUÍ VA LA TALLA CORRECTA
               stockb2b: b2b,
               stockweb: web,
               stockml: ml,
               priceb2b,
               priceweb,
               priceml,
-              price: priceweb, // Woo usa Web como base
+              price: priceweb,
             };
           })
-          .filter(Boolean) as any[];
+          .filter(Boolean);
 
         if (!rows.length)
           return toast.error("Ingresa stock en al menos una talla.");
@@ -1098,6 +1181,25 @@ export const StockManager = () => {
         if (error || !data) {
           console.error(error);
           return toastAndLog("No se pudieron crear los productos.", "error");
+        }
+
+        // ⬇️ NUEVO: subir imagen y guardar image_filename
+        if (productImages.length > 0 && sku) {
+          const file = productImages[0]; // principal
+          try {
+            const url = await uploadFileToStorage(file, sku);
+
+            await supabase
+              .from("productos")
+              .update({ image_filename: url })
+              .eq("sku", sku);
+          } catch (err) {
+            console.error("Error subiendo imagen:", err);
+            toastAndLog(
+              "El producto se creó, pero hubo un error subiendo la imagen.",
+              "error"
+            );
+          }
         }
 
         try {
@@ -1162,179 +1264,176 @@ export const StockManager = () => {
 
   /* ========================= TALLAS VISIBLES (DINÁMICAS) ========================= */
 
-/* ========================= TALLAS VISIBLES (DINÁMICAS) ========================= */
+  /* ========================= TALLAS VISIBLES (DINÁMICAS) ========================= */
 
-// Se usa SOLO en modo CREAR
-const [visibleTallas, setVisibleTallas] = useState<string[]>([]);
+  // Se usa SOLO en modo CREAR
+  const [visibleTallas, setVisibleTallas] = useState<string[]>([]);
 
-// Agregar una talla adicional (modo crear)
-const addNextTalla = (availableCols: any[]) => {
-  const remaining = availableCols.filter((t) => !visibleTallas.includes(t.etiqueta));
-  if (remaining.length > 0) {
-    setVisibleTallas((prev) => [...prev, remaining[0].etiqueta]);
-  }
-};
+  // Agregar una talla adicional (modo crear)
+  const addNextTalla = (availableCols: any[]) => {
+    const remaining = availableCols.filter(
+      (t) => !visibleTallas.includes(t.etiqueta)
+    );
+    if (remaining.length > 0) {
+      setVisibleTallas((prev) => [...prev, remaining[0].etiqueta]);
+    }
+  };
 
-// Quitar última talla visible (modo crear)
-const removeLastTalla = () => {
-  if (visibleTallas.length > 4) {
-    setVisibleTallas((prev) => prev.slice(0, -1));
-  }
-};
+  // Quitar última talla visible (modo crear)
+  const removeLastTalla = () => {
+    if (visibleTallas.length > 4) {
+      setVisibleTallas((prev) => prev.slice(0, -1));
+    }
+  };
 
-// SKU autogenerado
-const generateSKU = (name: string, categoriaId: number | string) => {
-  if (!name || !categoriaId) return "";
-  const clean = name.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-  const prefix = clean.substring(0, 3) || "PRD";
-  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `${prefix}-${categoriaId}-${random}`;
-};
+  // SKU autogenerado
+  const generateSKU = (name: string, categoriaId: number | string) => {
+    if (!name || !categoriaId) return "";
+    const clean = name.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    const prefix = clean.substring(0, 3) || "PRD";
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    return `${prefix}-${categoriaId}-${random}`;
+  };
 
-/* ========================= FUNCIONES AUXILIARES PARA EDITAR FAMILIA ========================= */
+  /* ========================= FUNCIONES AUXILIARES PARA EDITAR FAMILIA ========================= */
 
-const updateFamilyStock = (
-  tId: number,
-  field: "b2b" | "web" | "ml",
-  value: string
-) => {
-  const n = Number((value || "0").replace(/[^\d]/g, ""));
+  const updateFamilyStock = (
+    tId: number,
+    field: "b2b" | "web" | "ml",
+    value: string
+  ) => {
+    const n = Number((value || "0").replace(/[^\d]/g, ""));
 
-  setEditingFamily((prev) => {
-    if (!prev) return prev;
+    setEditingFamily((prev) => {
+      if (!prev) return prev;
 
-    const oldVal = prev.values[tId] || {
-      id: null,
-      b2b: 0,
-      web: 0,
-      ml: 0,
-      price: prev.basePrice ?? 0,
-    };
+      const oldVal = prev.values[tId] || {
+        id: null,
+        b2b: 0,
+        web: 0,
+        ml: 0,
+        price: prev.basePrice ?? 0,
+      };
 
-    return {
-      ...prev,
-      values: {
-        ...prev.values,
-        [tId]: { ...oldVal, [field]: n },
-      },
-    };
-  });
-};
-
-/* ========================= CONTROL DE TALLAS PARA EDITAR (IZQ / DER) ========================= */
-
-const getAllTallasForFamily = () => {
-  const catName =
-    catById[editingFamily?.categoria_id]?.toLowerCase().trim() || "";
-
-  const usaNumericas = catName === "pantalones" || catName === "shorts";
-  const isUnica = catName === "accesorios";
-
-  const filtered = tallas.filter((t) =>
-    isUnica
-      ? t.tipo === "unica"
-      : usaNumericas
-      ? t.tipo === "numerica"
-      : t.tipo === "alfanumerica"
-  );
-
-  return filtered.sort((a, b) =>
-    usaNumericas
-      ? (a.orden ?? 0) - (b.orden ?? 0)
-      : ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta)
-  );
-};
-
-const handleAddLeft = () => {
-  setEditingFamily(prev => {
-    if (!prev) return prev;
-
-    const all = getAllTallasForFamily();
-    const current = prev.cols;
-
-    const first = current[0];
-    const index = all.findIndex(t => t.id === first.id);
-    if (index <= 0) return prev;
-
-    const newTalla = all[index - 1];
-
-    return {
-      ...prev,
-      cols: [newTalla, ...prev.cols],
-      values: {
-        ...prev.values,
-        [newTalla.id]: prev.values[newTalla.id] || {
-          id: null,
-          b2b: 0,
-          web: 0,
-          ml: 0,
-          price: prev.basePrice ?? 0,
+      return {
+        ...prev,
+        values: {
+          ...prev.values,
+          [tId]: { ...oldVal, [field]: n },
         },
-      },
-    };
-  });
-};
+      };
+    });
+  };
 
+  /* ========================= CONTROL DE TALLAS PARA EDITAR (IZQ / DER) ========================= */
 
-const handleAddRight = () => {
-  setEditingFamily(prev => {
-    if (!prev) return prev;
+  const getAllTallasForFamily = () => {
+    const catName =
+      catById[editingFamily?.categoria_id]?.toLowerCase().trim() || "";
 
-    const all = getAllTallasForFamily();
-    const current = prev.cols;
+    const usaNumericas = catName === "pantalones" || catName === "shorts";
+   const isUnica = catName === "accesorios" || catName === "gorros";
 
-    const last = current[current.length - 1];
-    const index = all.findIndex(t => t.id === last.id);
-    if (index >= all.length - 1) return prev;
+    const filtered = tallas.filter((t) =>
+      isUnica
+        ? t.tipo === "unica"
+        : usaNumericas
+        ? t.tipo === "numerica"
+        : t.tipo === "alfanumerica"
+    );
 
-    const newTalla = all[index + 1];
+    return filtered.sort((a, b) =>
+      usaNumericas
+        ? (a.orden ?? 0) - (b.orden ?? 0)
+        : ALFA_ORDER.indexOf(a.etiqueta) - ALFA_ORDER.indexOf(b.etiqueta)
+    );
+  };
 
-    return {
-      ...prev,
-      cols: [...prev.cols, newTalla],
-      values: {
-        ...prev.values,
-        [newTalla.id]: prev.values[newTalla.id] || {
-          id: null,
-          b2b: 0,
-          web: 0,
-          ml: 0,
-          price: prev.basePrice ?? 0,
+  const handleAddLeft = () => {
+    setEditingFamily((prev) => {
+      if (!prev) return prev;
+
+      const all = getAllTallasForFamily();
+      const current = prev.cols;
+
+      const first = current[0];
+      const index = all.findIndex((t) => t.id === first.id);
+      if (index <= 0) return prev;
+
+      const newTalla = all[index - 1];
+
+      return {
+        ...prev,
+        cols: [newTalla, ...prev.cols],
+        values: {
+          ...prev.values,
+          [newTalla.id]: prev.values[newTalla.id] || {
+            id: null,
+            b2b: 0,
+            web: 0,
+            ml: 0,
+            price: prev.basePrice ?? 0,
+          },
         },
-      },
-    };
-  });
-};
+      };
+    });
+  };
 
+  const handleAddRight = () => {
+    setEditingFamily((prev) => {
+      if (!prev) return prev;
 
-// Remover izquierda
-const handleRemoveLeft = () => {
-  setEditingFamily(prev => {
-    if (!prev) return prev;
-    if (prev.cols.length <= 1) return prev;
+      const all = getAllTallasForFamily();
+      const current = prev.cols;
 
-    return {
-      ...prev,
-      cols: prev.cols.slice(1),
-    };
-  });
-};
+      const last = current[current.length - 1];
+      const index = all.findIndex((t) => t.id === last.id);
+      if (index >= all.length - 1) return prev;
 
+      const newTalla = all[index + 1];
 
-// Remover derecha
-const handleRemoveRight = () => {
-  setEditingFamily(prev => {
-    if (!prev) return prev;
-    if (prev.cols.length <= 1) return prev;
+      return {
+        ...prev,
+        cols: [...prev.cols, newTalla],
+        values: {
+          ...prev.values,
+          [newTalla.id]: prev.values[newTalla.id] || {
+            id: null,
+            b2b: 0,
+            web: 0,
+            ml: 0,
+            price: prev.basePrice ?? 0,
+          },
+        },
+      };
+    });
+  };
 
-    return {
-      ...prev,
-      cols: prev.cols.slice(0, -1),
-    };
-  });
-};
+  // Remover izquierda
+  const handleRemoveLeft = () => {
+    setEditingFamily((prev) => {
+      if (!prev) return prev;
+      if (prev.cols.length <= 1) return prev;
 
+      return {
+        ...prev,
+        cols: prev.cols.slice(1),
+      };
+    });
+  };
 
+  // Remover derecha
+  const handleRemoveRight = () => {
+    setEditingFamily((prev) => {
+      if (!prev) return prev;
+      if (prev.cols.length <= 1) return prev;
+
+      return {
+        ...prev,
+        cols: prev.cols.slice(0, -1),
+      };
+    });
+  };
 
   return (
     <div className="space-y-6 transition-colors duration-300">
@@ -1930,7 +2029,7 @@ const handleRemoveRight = () => {
                       )?.name || "";
                     const catName = rawCatName.toLowerCase().trim();
 
-                    const isUnica = catName === "accesorios";
+                   const isUnica = catName === "accesorios" || catName === "gorros";
                     const usaNumericas =
                       catName === "pantalones" || catName === "shorts";
 
@@ -2127,6 +2226,67 @@ const handleRemoveRight = () => {
                 </div>
               </>
             )}
+            {/* === IMÁGENES DEL PRODUCTO (MULTI-IMAGEN) === */}
+            <div className="border rounded-xl border-neutral-300 dark:border-neutral-700 p-4">
+              <label className="block text-sm font-semibold mb-2 text-neutral-700 dark:text-neutral-300">
+                Imágenes del producto
+              </label>
+
+              {/* zona de imágenes ya seleccionadas */}
+              {imagePreviews.length > 0 && (
+                <div className="grid grid-cols-3 gap-3 mb-3">
+                  {imagePreviews.map((src, i) => (
+                    <div
+                      key={i}
+                      className="relative w-full aspect-square rounded-lg overflow-hidden border border-neutral-300 dark:border-neutral-600"
+                    >
+                      <img
+                        src={src}
+                        className="w-full h-full object-cover"
+                        alt="preview"
+                      />
+                      <button
+                        onClick={() => {
+                          setProductImages((prev) =>
+                            prev.filter((_, idx) => idx !== i)
+                          );
+                          setImagePreviews((prev) =>
+                            prev.filter((_, idx) => idx !== i)
+                          );
+                        }}
+                        className="absolute top-1 right-1 bg-black/60 text-white p-1 rounded"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* INPUT MULTIPLE */}
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+
+                  setProductImages((prev) => [...prev, ...files]);
+
+                  const newPreviews = files.map((file) =>
+                    URL.createObjectURL(file)
+                  );
+
+                  setImagePreviews((prev) => [...prev, ...newPreviews]);
+                }}
+                className="w-full text-sm text-neutral-400 dark:text-neutral-500"
+              />
+
+              <p className="text-xs mt-2 text-neutral-500 dark:text-neutral-400">
+                Puedes subir múltiples imágenes. Se almacenarán en Supabase al
+                guardar el producto.
+              </p>
+            </div>
 
             {/* BOTONES GUARDAR/CANCELAR */}
             <div className="mt-4 flex gap-2">
