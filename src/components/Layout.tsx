@@ -425,189 +425,189 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
       </AnimatePresence>
 
       <nav className="bg-neutral-900 dark:bg-neutral-950 text-white shadow-lg border-b border-neutral-800 dark:border-neutral-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-3 items-center h-16">
-            {/* IZQUIERDA */}
-            <div className="flex items-center space-x-3">
-              <div className="w-30 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden ring-1 ring-black/10 dark:ring-white/10 shadow-lg">
-                <img
-                  src="/img/oldtree-logo.png"
-                  alt="OldTree"
-                  className="w-[90%] h-[90%] object-contain"
-                />
-              </div>
+  <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 
-              <h1 className="font-bold text-white text-lg">Stock Manager</h1>
-            </div>
+    {/* ====== NAV BAR ====== */}
+    <div className="h-16 flex items-center justify-between">
 
-            {/* TABS CENTRADOS */}
-            <div className="hidden lg:flex items-center justify-center">
-              <div className="flex items-center space-x-1">
-                {tabs.map((tab) => {
-                  const isActive = activeTab === tab.id;
-                  const color = tabColors[tab.id];
-                  const hasColor = !!color;
+      {/* IZQUIERDA */}
+      <div className="flex items-center space-x-3">
+        <div className="w-30 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden ring-1 ring-black/10 dark:ring-white/10 shadow-lg">
+          <img
+            src="/img/oldtree-logo.png"
+            alt="OldTree"
+            className="w-[90%] h-[90%] object-contain"
+          />
+        </div>
+        <h1 className="font-bold text-white text-lg">Stock Manager</h1>
+      </div>
 
-                  return (
-                    <button
-  key={tab.id}
-  onClick={() => handleTabChange(tab.id)}
-  className={`relative whitespace-nowrap px-4 py-2 rounded-lg transition font-medium ${
-    isActive
-      ? hasColor
-        ? "text-white"
-        : "text-black"
-      : "text-neutral-300 hover:text-white hover:bg-neutral-800"
-  }`}
->
+      {/* CENTRO (DESKTOP) */}
+      <div className="hidden lg:flex items-center justify-center flex-1">
+        <div className="flex items-center space-x-1">
+          {tabs.map((tab) => {
+            const isActive = activeTab === tab.id;
+            const color = tabColors[tab.id];
+            const hasColor = !!color;
 
-                      {isActive && (
-                        <motion.div
-                          layoutId="activeTabIndicator"
-                          className="absolute inset-0 rounded-lg"
-                          style={{ backgroundColor: hasColor ? color : "#fff" }}
-                        />
-                      )}
-
-                      <span className="relative z-10 flex items-center gap-2">
-                        {tab.icon}
-                        {tab.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* DERECHA */}
-            <div className="hidden lg:flex items-center justify-end space-x-4 relative">
-              {/* BOTÓN AJUSTES */}
+            return (
               <button
-                onClick={() => setSettingsOpen(!settingsOpen)}
-                className="w-10 h-10 flex items-center justify-center rounded-full bg-neutral-800 hover:bg-neutral-700 transition"
+                key={tab.id}
+                onClick={() => handleTabChange(tab.id)}
+                className={`relative whitespace-nowrap px-4 py-2 rounded-lg transition font-medium ${
+                  isActive
+                    ? hasColor
+                      ? "text-white"
+                      : "text-black"
+                    : "text-neutral-300 hover:text-white hover:bg-neutral-800"
+                }`}
               >
-                <motion.div
-                  animate={{ rotate: settingsOpen ? 180 : 0 }}
-                  transition={{ duration: 0.4 }}
-                >
-                  <Settings size={20} />
-                </motion.div>
-              </button>
-
-              {/* PANEL AJUSTES */}
-              <AnimatePresence>
-                {settingsOpen && (
+                {isActive && (
                   <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="absolute top-12 right-0 bg-neutral-800 text-white rounded-xl shadow-xl p-4 w-64 border border-neutral-700 z-50"
-                  >
-                    <h3 className="text-lg font-semibold mb-3">Ajustes</h3>
-
-                    {/* Tema */}
-                    <button
-                      onClick={toggleTheme}
-                      className="w-full flex justify-between items-center px-3 py-2 rounded-lg bg-neutral-700 hover:bg-neutral-600"
-                    >
-                      Tema
-                      {theme === "light" ? <Sun /> : <Moon />}
-                    </button>
-
-                    {/* GESTOR DE USUARIOS */}
-                    <button
-                      onClick={() => {
-                        if (user?.role?.toLowerCase() !== "admin") {
-                          alert(
-                            "No tienes permisos para acceder al gestor de usuarios."
-                          );
-                          return;
-                        }
-                        setSettingsOpen(false);
-                        openUserManager();
-                      }}
-                      className="flex w-full items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-neutral-700 mt-2"
-                    >
-                      <span className="flex items-center gap-2">
-                        <Users size={16} />
-                        Gestor de usuarios
-                      </span>
-
-                      <span className="text-[10px] uppercase text-neutral-400">
-                        Admin
-                      </span>
-                    </button>
-
-                    {/* Logout */}
-                    <button
-                      onClick={onLogout}
-                      className="w-full mt-3 px-3 py-2 rounded-lg bg-red-700 hover:bg-red-800"
-                    >
-                      Cerrar sesión
-                    </button>
-                  </motion.div>
+                    layoutId="activeTabIndicator"
+                    className="absolute inset-0 rounded-lg"
+                    style={{ backgroundColor: hasColor ? color : "#fff" }}
+                  />
                 )}
-              </AnimatePresence>
-            </div>
+                <span className="relative z-10 flex items-center gap-2">
+                  {tab.icon}
+                  {tab.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-            {/* MENÚ MOBILE */}
-            <button
-              onClick={() => setMenuOpen(!menuOpen)}
-              className="lg:hidden p-2 rounded-lg hover:bg-neutral-800"
+      {/* DERECHA (DESKTOP) */}
+      <div className="hidden lg:flex items-center justify-end space-x-4 relative">
+
+        <button
+          onClick={() => setSettingsOpen(!settingsOpen)}
+          className="w-10 h-10 flex items-center justify-center rounded-full bg-neutral-800 hover:bg-neutral-700 transition"
+        >
+          <motion.div animate={{ rotate: settingsOpen ? 180 : 0 }}>
+            <Settings size={20} />
+          </motion.div>
+        </button>
+
+        {/* PANEL AJUSTES DESKTOP */}
+        <AnimatePresence>
+          {settingsOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="absolute top-12 right-0 bg-neutral-800 text-white rounded-xl shadow-xl p-4 w-64 border border-neutral-700 z-50"
             >
-              {menuOpen ? <X size={24} /> : <Menu size={24} />}
-            </button>
-          </div>
+              <h3 className="text-lg font-semibold mb-3">Ajustes</h3>
 
-          {/* MOBILE MENU */}
-          {menuOpen && (
-            <div className="lg:hidden pb-4 space-y-1">
-              {/* Toggle tema */}
               <button
                 onClick={toggleTheme}
-                className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-neutral-800 text-white"
+                className="w-full flex justify-between items-center px-3 py-2 rounded-lg bg-neutral-700 hover:bg-neutral-600"
               >
+                Tema
                 {theme === "light" ? <Sun /> : <Moon />}
-                <span className="font-medium">Cambiar tema</span>
               </button>
 
-              {/* Tabs */}
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => handleTabChange(tab.id)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg ${
-                    activeTab === tab.id
-                      ? "bg-white text-black ring-1 ring-black/10 dark:bg-neutral-800 dark:text-white"
-                      : "text-neutral-300 hover:bg-neutral-800"
-                  }`}
-                >
-                  {tab.icon}
-                  <span>{tab.label}</span>
-                </button>
-              ))}
-
-              {/* Ajustes */}
               <button
-                onClick={() => setSettingsOpen(!settingsOpen)}
-                className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-neutral-300 hover:bg-neutral-800"
+                onClick={() => {
+                  if (user?.role !== "admin") {
+                    alert("No tienes permisos.");
+                    return;
+                  }
+                  setSettingsOpen(false);
+                  openUserManager();
+                }}
+                className="flex w-full items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-neutral-700 mt-2"
               >
-                <Settings />
-                Ajustes
+                <span className="flex items-center gap-2">
+                  <Users size={16} /> Gestor de usuarios
+                </span>
+                <span className="text-[10px] uppercase text-neutral-400">
+                  Admin
+                </span>
               </button>
 
-              {/* Logout */}
               <button
                 onClick={onLogout}
-                className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-red-400 hover:bg-red-700 hover:text-white"
+                className="w-full mt-3 px-3 py-2 rounded-lg bg-red-700 hover:bg-red-800"
               >
-                <LogOut />
                 Cerrar sesión
               </button>
-            </div>
+            </motion.div>
           )}
-        </div>
-      </nav>
+        </AnimatePresence>
+      </div>
+
+      {/* ===== HAMBURGUESA (MOBILE) ===== */}
+      <button
+        onClick={() => setMenuOpen(!menuOpen)}
+        className="lg:hidden absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg hover:bg-neutral-800"
+      >
+        {menuOpen ? <X size={26} /> : <Menu size={26} />}
+      </button>
+    </div>
+
+    {/* ===== MENÚ MOBILE ===== */}
+    <AnimatePresence>
+      {menuOpen && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className="lg:hidden pb-4 space-y-1 mt-2 bg-neutral-900 rounded-xl p-3 border border-neutral-800"
+        >
+          <button
+            onClick={toggleTheme}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-neutral-800 text-white"
+          >
+            {theme === "light" ? <Sun /> : <Moon />}
+            Cambiar tema
+          </button>
+
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => {
+                handleTabChange(tab.id);
+                setMenuOpen(false);
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg ${
+                activeTab === tab.id
+                  ? "bg-white text-black dark:bg-neutral-800 dark:text-white"
+                  : "text-neutral-300 hover:bg-neutral-800"
+              }`}
+            >
+              {tab.icon}
+              {tab.label}
+            </button>
+          ))}
+
+          {/* Ajustes MOBILE (ARREGLADO) */}
+          <button
+            onClick={() => {
+              setMenuOpen(false);
+              setSettingsOpen(true);
+            }}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-neutral-300 hover:bg-neutral-800"
+          >
+            <Settings size={20} /> Ajustes
+          </button>
+
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-red-400 hover:bg-red-700 hover:text-white"
+          >
+            <LogOut /> Cerrar sesión
+          </button>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+  </div>
+</nav>
+
 
       {/* CONTENIDO */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 transition">
@@ -739,16 +739,18 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
                             </tr>
                           )}
 
-                          {!loadingUsers && !errorUsers && users.length === 0 && (
-                            <tr>
-                              <td
-                                className="px-3 py-3 text-neutral-500 dark:text-neutral-400"
-                                colSpan={5}
-                              >
-                                Sin resultados.
-                              </td>
-                            </tr>
-                          )}
+                          {!loadingUsers &&
+                            !errorUsers &&
+                            users.length === 0 && (
+                              <tr>
+                                <td
+                                  className="px-3 py-3 text-neutral-500 dark:text-neutral-400"
+                                  colSpan={5}
+                                >
+                                  Sin resultados.
+                                </td>
+                              </tr>
+                            )}
 
                           {users.map((u) => (
                             <tr
@@ -813,7 +815,9 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
                         </span>
 
                         <button
-                          onClick={() => page < totalPages && loadUsers(page + 1)}
+                          onClick={() =>
+                            page < totalPages && loadUsers(page + 1)
+                          }
                           disabled={page >= totalPages || loadingUsers}
                           className="inline-flex items-center gap-1 px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-xl disabled:opacity-50 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
                         >
@@ -872,9 +876,7 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
                       className="w-full border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-200 rounded-xl p-2.5 text-sm"
                       type="password"
                       placeholder={
-                        editingId
-                          ? "Nueva contraseña (opcional)"
-                          : "Contraseña"
+                        editingId ? "Nueva contraseña (opcional)" : "Contraseña"
                       }
                       value={form.password || ""}
                       onChange={(e) =>
@@ -961,39 +963,41 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
                     )}
 
                     {(() => {
-  const s = assessPassword(form.password || "");
+                      const s = assessPassword(form.password || "");
 
-  // Reglas:
-  // - Crear: contraseña obligatoria y score >= 2
-  // - Editar: contraseña opcional, pero si la escribe debe tener score >= 2
-  const passwordIsWeak =
-    (!editingId && s.score < 2) ||
-    (editingId && form.password && form.password.length > 0 && s.score < 2);
+                      // Reglas:
+                      // - Crear: contraseña obligatoria y score >= 2
+                      // - Editar: contraseña opcional, pero si la escribe debe tener score >= 2
+                      const passwordIsWeak =
+                        (!editingId && s.score < 2) ||
+                        (editingId &&
+                          form.password &&
+                          form.password.length > 0 &&
+                          s.score < 2);
 
-  const savingDisabled = savingUser || passwordIsWeak;
+                      const savingDisabled = savingUser || passwordIsWeak;
 
-  return (
-    <button
-      onClick={handleSaveUser}
-      disabled={savingDisabled}
-      className={`w-full mt-2 py-2.5 rounded-lg text-sm font-semibold transition-colors
+                      return (
+                        <button
+                          onClick={handleSaveUser}
+                          disabled={savingDisabled}
+                          className={`w-full mt-2 py-2.5 rounded-lg text-sm font-semibold transition-colors
         ${
           savingDisabled
             ? "bg-neutral-400 dark:bg-neutral-700 text-white cursor-not-allowed"
             : "bg-blue-600 hover:bg-blue-700 text-white"
         }`}
-    >
-      {savingUser
-        ? "Guardando…"
-        : passwordIsWeak
-        ? "Contraseña débil"
-        : editingId
-        ? "Guardar cambios"
-        : "Crear usuario"}
-    </button>
-  );
-})()}
-
+                        >
+                          {savingUser
+                            ? "Guardando…"
+                            : passwordIsWeak
+                            ? "Contraseña débil"
+                            : editingId
+                            ? "Guardar cambios"
+                            : "Crear usuario"}
+                        </button>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
