@@ -1344,7 +1344,8 @@ export const StockManager = () => {
         </div>
 
         {/* Filtros */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full">
+
           <input
             type="text"
             placeholder="Buscar por nombre o SKU..."
