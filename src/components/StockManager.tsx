@@ -206,7 +206,6 @@ const FamCard = ({
             <div>Talla</div>
             <div className="text-center">B2B</div>
             <div className="text-center">Web</div>
-            <div className="text-center">ML</div>
             <div className="text-center">Total</div>
             <div className="text-center">Precio</div>
           </div>
@@ -214,8 +213,7 @@ const FamCard = ({
           {cols.map((t: any) => {
             const p = fam.byTalla[t.id];
             if (!p) return null;
-            const total =
-              (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0);
+            const total = (p.stockb2b || 0) + (p.stockweb || 0);
             const cls = getStockStatusClass(total);
 
             return (
@@ -231,9 +229,6 @@ const FamCard = ({
                 </div>
                 <div className="text-center text-[11px] font-semibold text-blue-700">
                   {p.stockweb}
-                </div>
-                <div className="text-center text-[11px] font-semibold text-amber-700">
-                  {p.stockml}
                 </div>
                 <div className={`text-center text-[11px] font-semibold ${cls}`}>
                   {total}
@@ -707,7 +702,6 @@ export const StockManager = () => {
     const selectedProducts = products.filter((p) => selectedIds.includes(p.id));
     const skus = selectedProducts.map((p) => String(p.sku));
 
-
     const { error } = await supabase
       .from("productos")
       .delete()
@@ -774,19 +768,17 @@ export const StockManager = () => {
     const allCols = columnsForFam(fam);
 
     // 👇 Solo las tallas que REALMENTE existen en BD para esta familia
-// Solo las tallas que realmente existen en BD
-let existingCols = allCols.filter((t) => !!fam.byTalla[t.id]);
+    // Solo las tallas que realmente existen en BD
+    let existingCols = allCols.filter((t) => !!fam.byTalla[t.id]);
 
-// 🔥 Obtener categoría correctamente
-const catName =
-  catById[fam.categoria_id]?.toLowerCase().trim() || "";
+    // 🔥 Obtener categoría correctamente
+    const catName = catById[fam.categoria_id]?.toLowerCase().trim() || "";
 
-// Si la categoría es gorros o accesorios → usar Única
-if (catName === "gorros" || catName === "accesorios") {
-  const unica = tallas.find((t) => t.tipo === "unica");
-  existingCols = unica ? [unica] : [];
-}
-
+    // Si la categoría es gorros o accesorios → usar Única
+    if (catName === "gorros" || catName === "accesorios") {
+      const unica = tallas.find((t) => t.tipo === "unica");
+      existingCols = unica ? [unica] : [];
+    }
 
     const values: EditFamilyState["values"] = {};
 
@@ -889,6 +881,29 @@ if (catName === "gorros" || catName === "accesorios") {
     try {
       /* ===================== EDITAR FAMILIA ===================== */
       if (isExistingSKU && editingFamily) {
+
+  // 🔥 SUBIR IMAGEN ANTES DE NADA
+  let uploadedImageName: string | null = null;
+
+  if (productImages.length > 0 && editingFamily.sku) {
+    try {
+      const file = productImages[0];
+      const fileName = await uploadFileToStorage(file, editingFamily.sku, 1);
+
+      await supabase
+        .from("productos")
+        .update({ image_filename: fileName })
+        .eq("sku", editingFamily.sku);
+
+      uploadedImageName = fileName;
+
+    } catch (err) {
+      console.error("Error subiendo imagen en editar:", err);
+      toast.error("No se pudo subir la imagen.");
+      return;
+    }
+  }
+
         // precios por canal (si no los usas aún, puedes dejar basePrice)
         const priceb2b = Math.max(
           0,
@@ -1015,44 +1030,6 @@ if (catName === "gorros" || catName === "accesorios") {
           );
         }
 
-        /* 3) CREAR NUEVAS TALLAS */
-        let createdRows: any[] = [];
-        if (creates.length) {
-          const { data, error } = await supabase
-            .from("productos")
-            .insert(
-              creates.map((c) => ({
-                ...c,
-                price: c.priceweb,
-              }))
-            )
-            .select();
-
-          if (error) {
-            console.error(error);
-            toastAndLog("No se pudieron crear algunas tallas.", "error");
-          } else {
-            createdRows = data ?? [];
-          }
-        }
-        if (productImages.length > 0 && editingFamily.sku) {
-          try {
-            const file = productImages[0];
-            const fileName = await uploadFileToStorage(
-              file,
-              editingFamily.sku,
-              1
-            );
-
-            await supabase
-              .from("productos")
-              .update({ image_filename: fileName })
-              .eq("sku", editingFamily.sku);
-          } catch (err) {
-            console.error("Error subiendo imagen en editar:", err);
-          }
-        }
-
         const msg: string[] = [];
         if (updates.length) msg.push(`Actualizadas ${updates.length}`);
         if (creates.length) msg.push(`Creadas ${creates.length}`);
@@ -1108,32 +1085,34 @@ if (catName === "gorros" || catName === "accesorios") {
         if (!rows.length)
           return toast.error("Ingresa stock en al menos una talla.");
 
+        // 1) SUBIR IMAGEN ANTES DE CREAR EL PRODUCTO
+        let uploadedImageName: string | null = null;
+
+        if (productImages.length > 0 && sku) {
+          try {
+            const file = productImages[0];
+            uploadedImageName = await uploadFileToStorage(file, sku, 1);
+          } catch (err) {
+            console.error("Error subiendo imagen:", err);
+            return toast.error("No se pudo subir la imagen.");
+          }
+        }
+
+        // 2) insertar productos usando image_filename si existe
+        const rowsWithImage = rows.map((r) => ({
+          ...r,
+          image_filename: uploadedImageName ?? null,
+        }));
+
         const { data, error } = await supabase
           .from("productos")
-          .insert(rows)
+          .insert(rowsWithImage)
           .select();
 
         if (error || !data) {
           console.error(error);
           return toastAndLog("No se pudieron crear los productos.", "error");
         }
-
-        // ⬇️ NUEVO: subir imagen y guardar image_filename
-        if (productImages.length > 0 && sku) {
-          try {
-            const file = productImages[0];
-            const fileName = await uploadFileToStorage(file, sku, 1);
-
-            await supabase
-              .from("productos")
-              .update({ image_filename: fileName })
-              .eq("sku", sku);
-          } catch (err) {
-            console.error("Error subiendo imagen:", err);
-          }
-        }
-
-
 
         toastAndLog(`Creadas ${rows.length} talla(s).`, "sync");
       }
@@ -1427,7 +1406,7 @@ if (catName === "gorros" || catName === "accesorios") {
                 matrix: undefined,
               });
               setProductImages([]);
-setImagePreviews([]);
+              setImagePreviews([]);
               setVisibleTallas(["S", "M", "L", "XL"]);
               setShowModal(true);
               setIsExistingSKU(false);
@@ -1569,8 +1548,7 @@ setImagePreviews([]);
       {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/60 flex items-center justify-center z-50 p-4 transition-colors">
-       <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-2xl shadow-2xl w-full max-w-5xl relative p-6 transition-all max-h-[90vh] overflow-y-auto">
-
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-2xl shadow-2xl w-full max-w-5xl relative p-6 transition-all max-h-[90vh] overflow-y-auto">
             <button
               className="absolute top-4 right-4 text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-white transition"
               onClick={() => {
@@ -1578,8 +1556,8 @@ setImagePreviews([]);
                 setEditingProduct(null);
                 setEditingFamily(null);
                 setIsExistingSKU(false);
-                  setProductImages([]);
-  setImagePreviews([]);
+                setProductImages([]);
+                setImagePreviews([]);
               }}
             >
               <X size={20} />
@@ -2159,10 +2137,9 @@ setImagePreviews([]);
                 <div className="grid grid-cols-3 gap-3 mb-3">
                   {imagePreviews.map((src, i) => (
                     <div
-  key={i}
-  className="relative w-64 h-64 rounded-lg overflow-hidden border border-neutral-300 dark:border-neutral-600 flex-shrink-0"
->
-
+                      key={i}
+                      className="relative w-64 h-64 rounded-lg overflow-hidden border border-neutral-300 dark:border-neutral-600 flex-shrink-0"
+                    >
                       <img
                         src={src}
                         className="w-full h-full object-cover"
@@ -2240,8 +2217,8 @@ setImagePreviews([]);
                   setEditingProduct(null);
                   setEditingFamily(null);
                   setIsExistingSKU(false);
-                    setProductImages([]);
-  setImagePreviews([]);
+                  setProductImages([]);
+                  setImagePreviews([]);
                 }}
                 className="border px-4 py-2 rounded"
               >

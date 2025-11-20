@@ -89,11 +89,6 @@ export const Layout = ({ children, onLogout }: LayoutProps) => {
     { id: "stock", label: "Stock Madre", icon: <Package size={20} /> },
     { id: "orders", label: "B2B", icon: <Building2 size={20} /> },
     { id: "wordpress", label: "Web", icon: <Globe size={20} /> },
-    {
-      id: "mercadolibre",
-      label: "Mercado Libre",
-      icon: <ShoppingCart size={20} />,
-    },
     { id: "alerts", label: "Alertas", icon: <Bell size={20} /> },
     { id: "admin", label: "Admin", icon: <Settings size={20} /> },
   ];
@@ -120,22 +115,22 @@ export const Layout = ({ children, onLogout }: LayoutProps) => {
       <nav className="bg-neutral-900 dark:bg-neutral-950 text-white shadow-lg border-b border-neutral-800 dark:border-neutral-700 transition-colors">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
          <div className="flex items-center justify-between h-16">
-  {/* LOGO */}
-  <div className="flex items-center space-x-3">
-    <div className="w-30 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden ring-1 ring-black/10 dark:ring-white/10 shadow-lg">
-      <img
-        src="/img/oldtree-logo.png"
-        alt="OldTree"
-        className="w-[85%] h-[85%] object-contain"
-      />
-    </div>
-    <h1 className="font-bold tracking-tight text-white">Stock Manager</h1>
+{/* LOGO + TÍTULO + TOGGLE */}
+<div className="flex items-center space-x-3">
+  <div className="w-30 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden ring-1 ring-black/10 dark:ring-white/10 shadow-lg">
+    <img
+      src="/img/oldtree-logo.png"
+      alt="OldTree"
+      className="w-[95%] h-[95%] object-contain"
+    />
   </div>
 
-  {/* ACCIONES DERECHA SIEMPRE VISIBLES (modo claro/oscuro + menú móvil) */}
-  <div className="flex items-center gap-3">
-    {/* BOTÓN MODO OSCURO / CLARO (visible en todos los tamaños) */}
-    <button
+  <h1 className="font-bold tracking-tight text-white text-xl">
+    Stock Manager
+  </h1>
+
+  {/* BOTÓN MODO OSCURO AHORA AQUÍ */}
+  <button
       onClick={toggleTheme}
       className="flex items-center justify-center w-9 h-9 rounded-full bg-neutral-800 hover:bg-neutral-700 text-yellow-400 dark:text-sky-300 transition-all duration-300 shadow-inner border border-neutral-700"
       title={theme === "light" ? "Modo oscuro" : "Modo claro"}
