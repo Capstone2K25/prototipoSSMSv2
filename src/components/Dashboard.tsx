@@ -157,12 +157,12 @@ export const Dashboard = () => {
   const totalB2B = useMemo(() => filtered.reduce((acc, p) => acc + (p.stockb2b || 0), 0), [filtered]);
   const totalWeb = useMemo(() => filtered.reduce((acc, p) => acc + (p.stockweb || 0), 0), [filtered]);
   const totalML = useMemo(() => filtered.reduce((acc, p) => acc + (p.stockml || 0), 0), [filtered]);
-  const totalMadre = totalB2B + totalWeb + totalML;
+  const totalMadre = totalB2B + totalWeb;
 
   // Top por TOTAL
   const topProducts = useMemo(() => {
     return [...filtered]
-      .map((p) => ({ ...p, total: (p.stockb2b || 0) + (p.stockweb || 0) + (p.stockml || 0) }))
+      .map((p) => ({ ...p, total: (p.stockb2b || 0) + (p.stockweb || 0) }))
       .sort((a, b) => b.total - a.total)
       .slice(0, 5);
   }, [filtered]);
@@ -173,7 +173,7 @@ export const Dashboard = () => {
     name: string;
     sku: string;
     talla?: string | null;
-    low: { channel: "B2B" | "Web" | "ML"; value: number }[];
+    low: { channel: "B2B" | "Web"; value: number }[];
   };
 
   const lowByChannelAll: LowGroup[] = useMemo(() => {
@@ -184,11 +184,9 @@ export const Dashboard = () => {
       const low: LowGroup["low"] = [];
       const b2b = p.stockb2b || 0;
       const web = p.stockweb || 0;
-      const ml = p.stockml || 0;
 
       if (b2b < THRESHOLD) low.push({ channel: "B2B", value: b2b });
       if (web < THRESHOLD) low.push({ channel: "Web", value: web });
-      if (ml < THRESHOLD) low.push({ channel: "ML", value: ml });
 
       if (low.length > 0) {
         low.sort((a, b) => channelRank[a.channel] - channelRank[b.channel]);
@@ -238,7 +236,6 @@ export const Dashboard = () => {
     () => [
       { name: "B2B", value: totalB2B },
       { name: "Web", value: totalWeb },
-      { name: "ML", value: totalML },
     ],
     [totalB2B, totalWeb, totalML]
   );
@@ -346,13 +343,12 @@ export const Dashboard = () => {
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">unidades totales</p>
           <div className="mt-3" style={{ width: "100%", height: 40 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={[{ canal: "B2B", value: totalB2B }, { canal: "Web", value: totalWeb }, { canal: "ML", value: totalML }]}>
+              <BarChart data={[{ canal: "B2B", value: totalB2B }, { canal: "Web", value: totalWeb }]}>
                 <XAxis dataKey="canal" hide />
                 <Tooltip cursor={false} />
                 <Bar dataKey="value">
                   <Cell fill={CH_PURPLE} />
                   <Cell fill={CH_SKY} />
-                  <Cell fill={CH_AMBER} />
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -378,16 +374,6 @@ export const Dashboard = () => {
         <p className="text-3xl font-bold">{totalWeb}</p>
         <p className="text-sm opacity-90 mt-2">unidades en sitio web</p>
       </div>
-
-      {/* ML */}
-      <div className="bg-amber-500 text-white rounded-xl p-6 shadow-md hover:shadow-lg transition-all">
-        <div className="flex items-center justify-between mb-4 opacity-90">
-          <h3 className="text-sm font-semibold uppercase tracking-wide">Stock ML</h3>
-          <ShoppingCart size={24} />
-        </div>
-        <p className="text-3xl font-bold">{totalML}</p>
-        <p className="text-sm opacity-90 mt-2">unidades en Mercado Libre</p>
-      </div>
     </div>
 
       {/* Distribución por categoría + Donut por canal */}
@@ -405,7 +391,6 @@ export const Dashboard = () => {
                 <Tooltip />
                 <Bar dataKey="B2B" stackId="a" fill={CH_PURPLE} />
                 <Bar dataKey="Web" stackId="a" fill={CH_SKY} />
-                <Bar dataKey="ML" stackId="a" fill={CH_AMBER} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -422,7 +407,6 @@ export const Dashboard = () => {
                 <Pie dataKey="value" data={compData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} label>
                   <Cell fill={CH_PURPLE} />
                   <Cell fill={CH_SKY} />
-                  <Cell fill={CH_AMBER} />
                 </Pie>
                 <Tooltip />
               </PieChart>
@@ -431,7 +415,6 @@ export const Dashboard = () => {
           <div className="mt-2 grid grid-cols-3 text-center text-sm text-neutral-700 dark:text-neutral-300">
             <div>B2B: {totalB2B}</div>
             <div>Web: {totalWeb}</div>
-            <div>ML: {totalML}</div>
           </div>
         </div>
       </div>
@@ -446,7 +429,7 @@ export const Dashboard = () => {
           </div>
           <div className="space-y-4">
             {topProducts.map((product, index) => {
-              const total = (product.stockb2b || 0) + (product.stockweb || 0) + (product.stockml || 0);
+              const total = (product.stockb2b || 0) + (product.stockweb || 0);
               return (
                 <div key={product.id} className="flex items-center space-x-4 pb-4 border-b border-neutral-200 dark:border-neutral-700 last:border-0">
                   <div className="flex-shrink-0 w-8 h-8 bg-neutral-700 dark:bg-neutral-800 text-white rounded-full flex items-center justify-center font-bold text-sm">
@@ -489,7 +472,6 @@ export const Dashboard = () => {
                 <option value="all">Todos</option>
                 <option value="B2B">B2B</option>
                 <option value="Web">Web</option>
-                <option value="ML">ML</option>
               </select>
             </div>
           </div>
