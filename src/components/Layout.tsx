@@ -553,55 +553,52 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
     <AnimatePresence>
       {menuOpen && (
         <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          className="lg:hidden pb-4 space-y-1 mt-2 bg-neutral-900 rounded-xl p-3 border border-neutral-800"
-        >
-          <button
-            onClick={toggleTheme}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-neutral-800 text-white"
-          >
-            {theme === "light" ? <Sun /> : <Moon />}
-            Cambiar tema
-          </button>
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      className="mt-2 bg-neutral-800 text-white rounded-xl shadow-xl p-4 border border-neutral-700"
+    >
+      <h3 className="text-lg font-semibold mb-3">Ajustes</h3>
 
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => {
-                handleTabChange(tab.id);
-                setMenuOpen(false);
-              }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg ${
-                activeTab === tab.id
-                  ? "bg-white text-black dark:bg-neutral-800 dark:text-white"
-                  : "text-neutral-300 hover:bg-neutral-800"
-              }`}
-            >
-              {tab.icon}
-              {tab.label}
-            </button>
-          ))}
+      {/* Tema */}
+      <button
+        onClick={() => {
+          toggleTheme();
+          setSettingsOpen(false);
+        }}
+        className="w-full flex justify-between items-center px-3 py-2 rounded-lg bg-neutral-700 hover:bg-neutral-600"
+      >
+        Tema
+        {theme === "light" ? <Sun /> : <Moon />}
+      </button>
 
-          {/* Ajustes MOBILE (ARREGLADO) */}
-          <button
-            onClick={() => {
-              setMenuOpen(false);
-              setSettingsOpen(true);
-            }}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-neutral-300 hover:bg-neutral-800"
-          >
-            <Settings size={20} /> Ajustes
-          </button>
+      {/* Gestor de usuarios */}
+      <button
+        onClick={() => {
+          if (user?.role?.toLowerCase() !== "admin") {
+            alert("No tienes permisos para acceder al gestor de usuarios.");
+            return;
+          }
+          setSettingsOpen(false);
+          setMenuOpen(false);
+          openUserManager();
+        }}
+        className="flex w-full items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-neutral-700 mt-3"
+      >
+        <span className="flex items-center gap-2">
+          <Users size={16} /> Gestor de usuarios
+        </span>
+        <span className="text-[10px] uppercase text-neutral-400">Admin</span>
+      </button>
 
-          <button
-            onClick={onLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-red-400 hover:bg-red-700 hover:text-white"
-          >
-            <LogOut /> Cerrar sesión
-          </button>
-        </motion.div>
+      {/* Logout */}
+      <button
+        onClick={onLogout}
+        className="w-full mt-3 px-3 py-2 rounded-lg bg-red-700 hover:bg-red-800"
+      >
+        Cerrar sesión
+      </button>
+    </motion.div>
       )}
     </AnimatePresence>
 
