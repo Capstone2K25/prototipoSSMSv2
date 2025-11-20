@@ -499,62 +499,71 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
           </div>
         </div>
       </nav>
-       {/* ===== MENÚ MOBILE ===== */}
-          <AnimatePresence>
-            {menuOpen && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="mt-2 bg-neutral-900 text-white rounded-xl shadow-xl p-4 border border-neutral-800 lg:hidden"
-              >
-                 {/* Tabs */}
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => {
-                handleTabChange(tab.id);
-                setMenuOpen(false);
-              }}
-              className={`
-                w-full flex items-center gap-3 px-4 py-3 rounded-lg
-                ${
-                  activeTab === tab.id
-                    ? "bg-white text-black ring-1 ring-black/10 dark:bg-neutral-800 dark:text-white"
-                    : "text-neutral-300 hover:bg-neutral-800"
-                }
-              `}
-            >
-              {tab.icon}
-              <span>{tab.label}</span>
-            </button>
-          ))}
+      {/* ===== MENÚ MOBILE ===== */}
+      <AnimatePresence>
+        {menuOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="mt-2 bg-neutral-900 text-white rounded-xl shadow-xl p-4 border border-neutral-800 lg:hidden"
+          >
+            {/* Tabs */}
+            {tabs.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const color = tabColors[tab.id];
+              const hasColor = !!color;
 
-                {/* Aquí podrías volver a poner los tabs si quieres */}
-
-                {/* Ajustes */}
+              return (
                 <button
+                  key={tab.id}
                   onClick={() => {
+                    handleTabChange(tab.id);
                     setMenuOpen(false);
-                    setSettingsOpen(true);
                   }}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-neutral-300 hover:bg-neutral-800 mt-1"
+                  className={`
+        w-full flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition
+        ${
+          isActive
+            ? hasColor
+              ? "text-white"
+              : "bg-white text-black ring-1 ring-black/10 dark:bg-neutral-800 dark:text-white"
+            : "text-neutral-300 hover:bg-neutral-800"
+        }
+      `}
+                  style={isActive && hasColor ? { backgroundColor: color } : {}}
                 >
-                  <Settings size={20} />
-                  Ajustes
+                  {tab.icon}
+                  <span>{tab.label}</span>
                 </button>
+              );
+            })}
 
-                {/* Logout */}
-                <button
-                  onClick={onLogout}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-red-400 hover:bg-red-700 hover:text-white mt-1"
-                >
-                  <LogOut />
-                  Cerrar sesión
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
+            {/* Aquí podrías volver a poner los tabs si quieres */}
+
+            {/* Ajustes */}
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                setSettingsOpen(true);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-neutral-300 hover:bg-neutral-800 mt-1"
+            >
+              <Settings size={20} />
+              Ajustes
+            </button>
+
+            {/* Logout */}
+            <button
+              onClick={onLogout}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-red-400 hover:bg-red-700 hover:text-white mt-1"
+            >
+              <LogOut />
+              Cerrar sesión
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* PANEL AJUSTES GLOBAL (MOBILE + DESKTOP) */}
       <AnimatePresence>
         {settingsOpen && (
