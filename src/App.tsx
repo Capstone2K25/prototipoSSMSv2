@@ -22,11 +22,9 @@ const SESSION_KEY = "ssms_user";
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabType>(() => {
-  return (localStorage.getItem("activeTab") as TabType) || "dashboard";
-});
+    return (localStorage.getItem("activeTab") as TabType) || "dashboard";
+  });
 
-
-  // 1) Hidratar sesión desde localStorage (con expiración)
   const [user, setUser] = useState<AppUser | null>(() => {
     try {
       const raw = localStorage.getItem(SESSION_KEY);
@@ -42,33 +40,28 @@ function App() {
     }
   });
 
-  // 2) Mantener pestañas como antes
   useEffect(() => {
-  const handleTabChange = (event: Event) => {
-    const customEvent = event as CustomEvent<TabType>;
-    setActiveTab(customEvent.detail);
-    localStorage.setItem("activeTab", customEvent.detail); // 👈 persistir pestaña actual
-  };
-  window.addEventListener("tabChange", handleTabChange);
-  return () => window.removeEventListener("tabChange", handleTabChange);
-}, []);
+    const handleTabChange = (event: Event) => {
+      const customEvent = event as CustomEvent<TabType>;
+      setActiveTab(customEvent.detail);
+      localStorage.setItem("activeTab", customEvent.detail);
+    };
+    window.addEventListener("tabChange", handleTabChange);
+    return () => window.removeEventListener("tabChange", handleTabChange);
+  }, []);
 
-  // 3) Guardar sesión al hacer login (duración 7 días)
   const handleLogin = (u: AppUser) => {
-    const exp = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 días
+    const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
     localStorage.setItem(SESSION_KEY, JSON.stringify({ user: u, exp }));
     setUser(u);
   };
 
-  // 4) Logout: limpiar almacenamiento
   const handleLogout = () => {
-  localStorage.removeItem("activeTab");
-  localStorage.removeItem(SESSION_KEY);
-  setUser(null);
-};
+    localStorage.removeItem("activeTab");
+    localStorage.removeItem(SESSION_KEY);
+    setUser(null);
+  };
 
-
-  // 5) Sincronizar logout/login entre pestañas
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === SESSION_KEY) {
@@ -101,8 +94,12 @@ function App() {
         return <PurchaseOrders />;
       case "alerts":
         return <Alerts />;
+
+      // 👇 Si por alguna razón el tab queda en "admin",
+      // mostramos el dashboard (o lo que prefieras), NO la vista Admin.
       case "admin":
-        return <Admin user={user} />;
+        return <Dashboard />;
+
       default:
         return <Dashboard />;
     }
@@ -111,9 +108,15 @@ function App() {
   if (!user) return <Login onLogin={handleLogin} />;
 
   return (
-    <Layout onLogout={handleLogout} user={user}>
-      {renderContent()}
-    </Layout>
+   <Layout onLogout={handleLogout} user={user}>
+  {/* Contenido normal según tab */}
+  {renderContent()}
+
+  {/* 👇 Admin siempre montado pero invisible */}
+  <div style={{ display: "none" }}>
+    <Admin user={user} />
+  </div>
+</Layout>
   );
 }
 

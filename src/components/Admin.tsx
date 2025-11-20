@@ -445,7 +445,16 @@ export const Admin = ({ user }: AdminProps) => {
     setPage(1);
     void loadUsers(1);
   };
+  useEffect(() => {
+    if (!isAdmin) return;
 
+    const handler = () => {
+      openManager();
+    };
+
+    window.addEventListener("admin:openUserManager", handler);
+    return () => window.removeEventListener("admin:openUserManager", handler);
+  }, [isAdmin]); // (si quieres ser más estricto, puedes añadir openManager en deps)
   // ====== EFECTOS DE SINCRONIZACIÓN ======
   // Montaje inicial
   useEffect(() => {
