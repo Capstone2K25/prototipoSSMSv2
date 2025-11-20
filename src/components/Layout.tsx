@@ -425,91 +425,183 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
       </AnimatePresence>
 
       <nav className="bg-neutral-900 dark:bg-neutral-950 text-white shadow-lg border-b border-neutral-800 dark:border-neutral-700">
-  <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          {/* ====== NAV BAR ====== */}
+          <div className="h-16 flex items-center justify-between">
+            {/* IZQUIERDA */}
+            <div className="flex items-center space-x-3">
+              <div className="w-30 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden ring-1 ring-black/10 dark:ring-white/10 shadow-lg">
+                <img
+                  src="/img/oldtree-logo.png"
+                  alt="OldTree"
+                  className="w-[90%] h-[90%] object-contain"
+                />
+              </div>
+              <h1 className="font-bold text-white text-lg">Stock Manager</h1>
+            </div>
 
-    {/* ====== NAV BAR ====== */}
-    <div className="h-16 flex items-center justify-between">
+            {/* CENTRO (DESKTOP) */}
+            <div className="hidden lg:flex items-center justify-center flex-1">
+              <div className="flex items-center space-x-1">
+                {tabs.map((tab) => {
+                  const isActive = activeTab === tab.id;
+                  const color = tabColors[tab.id];
+                  const hasColor = !!color;
 
-      {/* IZQUIERDA */}
-      <div className="flex items-center space-x-3">
-        <div className="w-30 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden ring-1 ring-black/10 dark:ring-white/10 shadow-lg">
-          <img
-            src="/img/oldtree-logo.png"
-            alt="OldTree"
-            className="w-[90%] h-[90%] object-contain"
-          />
-        </div>
-        <h1 className="font-bold text-white text-lg">Stock Manager</h1>
-      </div>
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => handleTabChange(tab.id)}
+                      className={`relative whitespace-nowrap px-4 py-2 rounded-lg transition font-medium ${
+                        isActive
+                          ? hasColor
+                            ? "text-white"
+                            : "text-black"
+                          : "text-neutral-300 hover:text-white hover:bg-neutral-800"
+                      }`}
+                    >
+                      {isActive && (
+                        <motion.div
+                          layoutId="activeTabIndicator"
+                          className="absolute inset-0 rounded-lg"
+                          style={{ backgroundColor: hasColor ? color : "#fff" }}
+                        />
+                      )}
+                      <span className="relative z-10 flex items-center gap-2">
+                        {tab.icon}
+                        {tab.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
-      {/* CENTRO (DESKTOP) */}
-      <div className="hidden lg:flex items-center justify-center flex-1">
-        <div className="flex items-center space-x-1">
-          {tabs.map((tab) => {
-            const isActive = activeTab === tab.id;
-            const color = tabColors[tab.id];
-            const hasColor = !!color;
-
-            return (
+            {/* DERECHA (DESKTOP) */}
+            <div className="hidden lg:flex items-center justify-end space-x-4 relative">
               <button
-                key={tab.id}
-                onClick={() => handleTabChange(tab.id)}
-                className={`relative whitespace-nowrap px-4 py-2 rounded-lg transition font-medium ${
-                  isActive
-                    ? hasColor
-                      ? "text-white"
-                      : "text-black"
-                    : "text-neutral-300 hover:text-white hover:bg-neutral-800"
-                }`}
+                onClick={() => setSettingsOpen(!settingsOpen)}
+                className="w-10 h-10 flex items-center justify-center rounded-full bg-neutral-800 hover:bg-neutral-700 transition"
               >
-                {isActive && (
-                  <motion.div
-                    layoutId="activeTabIndicator"
-                    className="absolute inset-0 rounded-lg"
-                    style={{ backgroundColor: hasColor ? color : "#fff" }}
-                  />
-                )}
-                <span className="relative z-10 flex items-center gap-2">
-                  {tab.icon}
-                  {tab.label}
-                </span>
+                <motion.div animate={{ rotate: settingsOpen ? 180 : 0 }}>
+                  <Settings size={20} />
+                </motion.div>
               </button>
-            );
-          })}
-        </div>
-      </div>
+            </div>
 
-      {/* DERECHA (DESKTOP) */}
-      <div className="hidden lg:flex items-center justify-end space-x-4 relative">
-
-        <button
-          onClick={() => setSettingsOpen(!settingsOpen)}
-          className="w-10 h-10 flex items-center justify-center rounded-full bg-neutral-800 hover:bg-neutral-700 transition"
-        >
-          <motion.div animate={{ rotate: settingsOpen ? 180 : 0 }}>
-            <Settings size={20} />
-          </motion.div>
-        </button>
-
-        {/* PANEL AJUSTES DESKTOP */}
-        <AnimatePresence>
-          {settingsOpen && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="absolute top-12 right-0 bg-neutral-800 text-white rounded-xl shadow-xl p-4 w-64 border border-neutral-700 z-50"
+            {/* ===== HAMBURGUESA (MOBILE) ===== */}
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="lg:hidden absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg hover:bg-neutral-800"
             >
-              <h3 className="text-lg font-semibold mb-3">Ajustes</h3>
+              {menuOpen ? <X size={26} /> : <Menu size={26} />}
+            </button>
+          </div>
+        </div>
+      </nav>
+      {/* ===== MENÚ MOBILE ===== */}
+      <AnimatePresence>
+        {menuOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="mt-2 bg-neutral-900 text-white rounded-xl shadow-xl p-4 border border-neutral-800 lg:hidden"
+          >
+            {/* Tabs */}
+            {tabs.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const color = tabColors[tab.id];
+              const hasColor = !!color;
 
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    handleTabChange(tab.id);
+                    setMenuOpen(false);
+                  }}
+                  className={`
+        w-full flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition
+        ${
+          isActive
+            ? hasColor
+              ? "text-white"
+              : "bg-white text-black ring-1 ring-black/10 dark:bg-neutral-800 dark:text-white"
+            : "text-neutral-300 hover:bg-neutral-800"
+        }
+      `}
+                  style={isActive && hasColor ? { backgroundColor: color } : {}}
+                >
+                  {tab.icon}
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+
+            {/* Aquí podrías volver a poner los tabs si quieres */}
+
+            {/* Ajustes */}
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                setSettingsOpen(true);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-neutral-300 hover:bg-neutral-800 mt-1"
+            >
+              <Settings size={20} />
+              Ajustes
+            </button>
+
+            {/* Logout */}
+            <button
+              onClick={onLogout}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-red-400 hover:bg-red-700 hover:text-white mt-1"
+            >
+              <LogOut />
+              Cerrar sesión
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* PANEL AJUSTES GLOBAL (MOBILE + DESKTOP) */}
+      <AnimatePresence>
+        {settingsOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex justify-center items-start bg-black/40 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ y: -20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -20, opacity: 0 }}
+              className="mt-6 w-[90%] max-w-md bg-neutral-900 dark:bg-neutral-950 text-white 
+                   rounded-xl shadow-2xl border border-neutral-700 relative p-5"
+            >
+              {/* BOTÓN DE CERRAR */}
+              <button
+                onClick={() => setSettingsOpen(false)}
+                className="absolute right-4 top-4 p-2 rounded-full bg-neutral-800 
+                     hover:bg-neutral-700 transition"
+              >
+                <X size={20} />
+              </button>
+
+              <h3 className="text-xl font-semibold mb-6">Ajustes</h3>
+
+              {/* Tema */}
               <button
                 onClick={toggleTheme}
-                className="w-full flex justify-between items-center px-3 py-2 rounded-lg bg-neutral-700 hover:bg-neutral-600"
+                className="w-full flex justify-between items-center px-3 py-3 
+                     rounded-lg bg-neutral-800 hover:bg-neutral-700"
               >
                 Tema
                 {theme === "light" ? <Sun /> : <Moon />}
               </button>
 
+              {/* Gestor de usuarios */}
               <button
                 onClick={() => {
                   if (user?.role !== "admin") {
@@ -519,7 +611,8 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
                   setSettingsOpen(false);
                   openUserManager();
                 }}
-                className="flex w-full items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-neutral-700 mt-2"
+                className="w-full flex justify-between items-center px-3 py-3 rounded-lg 
+                     hover:bg-neutral-800 mt-3"
               >
                 <span className="flex items-center gap-2">
                   <Users size={16} /> Gestor de usuarios
@@ -529,82 +622,17 @@ export const Layout = ({ children, onLogout, user }: LayoutProps) => {
                 </span>
               </button>
 
+              {/* Logout */}
               <button
                 onClick={onLogout}
-                className="w-full mt-3 px-3 py-2 rounded-lg bg-red-700 hover:bg-red-800"
+                className="w-full mt-6 px-3 py-3 rounded-xl bg-red-700 hover:bg-red-800"
               >
                 Cerrar sesión
               </button>
             </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* ===== HAMBURGUESA (MOBILE) ===== */}
-      <button
-        onClick={() => setMenuOpen(!menuOpen)}
-        className="lg:hidden absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg hover:bg-neutral-800"
-      >
-        {menuOpen ? <X size={26} /> : <Menu size={26} />}
-      </button>
-    </div>
-
-    {/* ===== MENÚ MOBILE ===== */}
-    <AnimatePresence>
-      {menuOpen && (
-        <motion.div
-      initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10 }}
-      className="mt-2 bg-neutral-800 text-white rounded-xl shadow-xl p-4 border border-neutral-700"
-    >
-      <h3 className="text-lg font-semibold mb-3">Ajustes</h3>
-
-      {/* Tema */}
-      <button
-        onClick={() => {
-          toggleTheme();
-          setSettingsOpen(false);
-        }}
-        className="w-full flex justify-between items-center px-3 py-2 rounded-lg bg-neutral-700 hover:bg-neutral-600"
-      >
-        Tema
-        {theme === "light" ? <Sun /> : <Moon />}
-      </button>
-
-      {/* Gestor de usuarios */}
-      <button
-        onClick={() => {
-          if (user?.role?.toLowerCase() !== "admin") {
-            alert("No tienes permisos para acceder al gestor de usuarios.");
-            return;
-          }
-          setSettingsOpen(false);
-          setMenuOpen(false);
-          openUserManager();
-        }}
-        className="flex w-full items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-neutral-700 mt-3"
-      >
-        <span className="flex items-center gap-2">
-          <Users size={16} /> Gestor de usuarios
-        </span>
-        <span className="text-[10px] uppercase text-neutral-400">Admin</span>
-      </button>
-
-      {/* Logout */}
-      <button
-        onClick={onLogout}
-        className="w-full mt-3 px-3 py-2 rounded-lg bg-red-700 hover:bg-red-800"
-      >
-        Cerrar sesión
-      </button>
-    </motion.div>
-      )}
-    </AnimatePresence>
-
-  </div>
-</nav>
-
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* CONTENIDO */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 transition">
