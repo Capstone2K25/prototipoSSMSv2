@@ -201,12 +201,14 @@ const FamCard = ({
       {/* Expandible */}
       {isOpen && (
         <div className="px-4 pb-4 border-t border-neutral-100 text-xs overflow-x-auto">
-          <div className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr,0.7fr,1fr] gap-2 py-2 font-semibold text-[11px] text-neutral-500">
+          <div
+            className="grid grid-cols-[1fr,0.6fr,0.6fr,0.6fr]
+ gap-2 py-2 font-semibold text-[11px] text-neutral-500"
+          >
             <div>Talla</div>
             <div className="text-center">B2B</div>
             <div className="text-center">Web</div>
             <div className="text-center">Total</div>
-            <div className="text-center">Precio</div>
           </div>
 
           {cols.map((t: any) => {
@@ -218,7 +220,8 @@ const FamCard = ({
             return (
               <div
                 key={t.id}
-                className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr,0.7fr,1fr] gap-2 items-center py-1.5 rounded-md hover:bg-neutral-50"
+                className="grid grid-cols-[1fr,0.6fr,0.6fr,0.6fr]
+ gap-2 items-center py-1.5 rounded-md hover:bg-neutral-50"
               >
                 <div className="font-semibold text-neutral-800">
                   {t.etiqueta}
@@ -232,12 +235,26 @@ const FamCard = ({
                 <div className={`text-center text-[11px] font-semibold ${cls}`}>
                   {total}
                 </div>
-                <div className="text-center text-[11px] text-neutral-600">
-                  {p.price ? formatPrice(p.price) : "—"}
-                </div>
               </div>
             );
           })}
+          {/* FILA DE PRECIO */}
+          <div className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr] gap-2 items-center py-2 border-t mt-2">
+            <div className="font-semibold text-neutral-900">Precio</div>
+
+            {/* PRECIO B2B */}
+            <div className="text-center text-[12px] font-bold text-fuchsia-700">
+              {formatPrice(fam.byTalla[cols[0].id]?.priceb2b || 0)}
+            </div>
+
+            {/* PRECIO WEB */}
+            <div className="text-center text-[12px] font-bold text-blue-700">
+              {formatPrice(fam.byTalla[cols[0].id]?.priceweb || 0)}
+            </div>
+
+            {/* TOTAL VACÍO */}
+            <div></div>
+          </div>
         </div>
       )}
     </div>
@@ -495,7 +512,7 @@ export const StockManager = () => {
       let query = supabase
         .from("productos")
         .select(
-          "id, name, sku, price, categoria_id, talla_id, stockb2b, stockweb, stockml",
+          "id, name, sku, price, priceb2b, priceweb, categoria_id, talla_id, stockb2b, stockweb",
           { count: "exact" }
         );
 
@@ -522,6 +539,8 @@ export const StockManager = () => {
         talla_id: p.talla_id ?? null,
         stockb2b: Number(p.stockb2b) || 0,
         stockweb: Number(p.stockweb) || 0,
+        priceb2b: Number(p.priceb2b) || 0,
+        priceweb: Number(p.priceweb) || 0,
       }));
 
       startTransition(() => {
@@ -875,28 +894,30 @@ export const StockManager = () => {
     try {
       /* ===================== EDITAR FAMILIA ===================== */
       if (isExistingSKU && editingFamily) {
+        // 🔥 SUBIR IMAGEN ANTES DE NADA
+        let uploadedImageName: string | null = null;
 
-  // 🔥 SUBIR IMAGEN ANTES DE NADA
-  let uploadedImageName: string | null = null;
+        if (productImages.length > 0 && editingFamily.sku) {
+          try {
+            const file = productImages[0];
+            const fileName = await uploadFileToStorage(
+              file,
+              editingFamily.sku,
+              1
+            );
 
-  if (productImages.length > 0 && editingFamily.sku) {
-    try {
-      const file = productImages[0];
-      const fileName = await uploadFileToStorage(file, editingFamily.sku, 1);
+            await supabase
+              .from("productos")
+              .update({ image_filename: fileName })
+              .eq("sku", editingFamily.sku);
 
-      await supabase
-        .from("productos")
-        .update({ image_filename: fileName })
-        .eq("sku", editingFamily.sku);
-
-      uploadedImageName = fileName;
-
-    } catch (err) {
-      console.error("Error subiendo imagen en editar:", err);
-      toast.error("No se pudo subir la imagen.");
-      return;
-    }
-  }
+            uploadedImageName = fileName;
+          } catch (err) {
+            console.error("Error subiendo imagen en editar:", err);
+            toast.error("No se pudo subir la imagen.");
+            return;
+          }
+        }
 
         // precios por canal (si no los usas aún, puedes dejar basePrice)
         const priceb2b = Math.max(
@@ -1316,7 +1337,6 @@ export const StockManager = () => {
 
         {/* Filtros */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full">
-
           <input
             type="text"
             placeholder="Buscar por nombre o SKU..."
@@ -1426,30 +1446,32 @@ export const StockManager = () => {
             No hay productos para mostrar.
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          <div className="flex flex-wrap gap-6">
             {pageFams.map((fam, idx) => {
               const cols = columnsForFam(fam);
               const totalFam = Object.values(fam.byTalla).reduce(
-                (acc, p) =>
-                  acc +
-                  (p.stockb2b || 0) +
-                  (p.stockweb || 0),
+                (acc, p) => acc + (p.stockb2b || 0) + (p.stockweb || 0),
                 0
               );
               const famKey = `${fam.name}-${idx}`;
 
               return (
-                <FamCard
+                <div
                   key={famKey}
-                  fam={fam}
-                  cols={cols}
-                  catById={catById}
-                  totalFam={totalFam}
-                  openEditFamily={openEditFamily}
-                  getStockStatusClass={getStockStatusClass}
-                  formatPrice={formatPrice}
-                  expandAll={expandAll}
-                />
+                  className="w-full md:w-[calc(50%-12px)] xl:w-[calc(33.33%-16px)]"
+                >
+                  <FamCard
+                    key={famKey}
+                    fam={fam}
+                    cols={cols}
+                    catById={catById}
+                    totalFam={totalFam}
+                    openEditFamily={openEditFamily}
+                    getStockStatusClass={getStockStatusClass}
+                    formatPrice={formatPrice}
+                    expandAll={expandAll}
+                  />
+                </div>
               );
             })}
           </div>
@@ -1539,6 +1561,10 @@ export const StockManager = () => {
                 : "Agregar producto nuevo"}
             </h3>
 
+            <div className="mb-3 text-xs text-neutral-500 dark:text-neutral-400">
+              Edita el stock <strong>absoluto</strong> por talla y por canal.{" "}
+              <strong>Los precios se manejan por canal.</strong>
+            </div>
             {/* ================== MODO EDITAR ================== */}
             {isExistingSKU && editingFamily && (
               <>
@@ -1566,11 +1592,42 @@ export const StockManager = () => {
                   />
                 </div>
 
-                <div className="mb-3 text-xs text-neutral-500 dark:text-neutral-400">
-                  Edita el stock <strong>absoluto</strong> por talla y por
-                  canal. <strong>Los precios se manejan por canal.</strong>
-                </div>
+                <div className="grid grid-cols-3 gap-4 mt-4">
+                  <div>
+                    <label className="block text-sm text-neutral-600 dark:text-neutral-400 mb-1">
+                      Precio B2B
+                    </label>
+                    <input
+                      type="number"
+                      value={editingFamily.priceb2b}
+                      onChange={(e) =>
+                        setEditingFamily((p) => ({
+                          ...p,
+                          priceb2b: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                    />
+                  </div>
 
+                  <div>
+                    <label className="block text-sm text-neutral-600 dark:text-neutral-400 mb-1">
+                      Precio Web
+                    </label>
+                    <input
+                      type="number"
+                      value={editingFamily.priceweb}
+                      onChange={(e) =>
+                        setEditingFamily((p) => ({
+                          ...p,
+                          priceweb: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full border border-neutral-300 dark:border-neutral-700 rounded-lg px-3 py-2 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
+                    />
+                  </div>
+                </div>
+<br></br>
                 {/* BOTONES de tallas */}
                 <div className="flex justify-between mb-2">
                   <div className="flex gap-2">
@@ -1617,10 +1674,10 @@ export const StockManager = () => {
                   <div
                     className="grid gap-y-2 gap-x-2 items-center text-sm"
                     style={{
-                      gridTemplateColumns: `120px repeat(${editingFamily.cols.length}, minmax(72px, 1fr)) 120px`,
+                      gridTemplateColumns: `120px repeat(${editingFamily.cols.length}, minmax(72px, 1fr))`,
                     }}
                   >
-                    {/* Cabecera tallas + columna Precio */}
+                    {/* Cabecera tallas */}
                     <div></div>
                     {editingFamily.cols.map((t) => (
                       <div
@@ -1630,9 +1687,6 @@ export const StockManager = () => {
                         {t.etiqueta}
                       </div>
                     ))}
-                    <div className="text-center text-xs text-neutral-700 dark:text-neutral-300 font-medium">
-                      Precio
-                    </div>
 
                     {/* ===== B2B ===== */}
                     <div className="text-right pr-2">
@@ -1653,21 +1707,6 @@ export const StockManager = () => {
                         />
                       </div>
                     ))}
-                    <div className="text-center">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-200"
-                        value={editingFamily.priceb2b ?? 0}
-                        onChange={(e) =>
-                          setEditingFamily((p) =>
-                            p
-                              ? { ...p, priceb2b: Number(e.target.value || 0) }
-                              : p
-                          )
-                        }
-                      />
-                    </div>
 
                     {/* ===== Web ===== */}
                     <div className="text-right pr-2">
@@ -1688,21 +1727,6 @@ export const StockManager = () => {
                         />
                       </div>
                     ))}
-                    <div className="text-center">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-200"
-                        value={editingFamily.priceweb ?? 0}
-                        onChange={(e) =>
-                          setEditingFamily((p) =>
-                            p
-                              ? { ...p, priceweb: Number(e.target.value || 0) }
-                              : p
-                          )
-                        }
-                      />
-                    </div>
 
                     {/* ===== Total ===== */}
                     <div className="text-right pr-2 text-neutral-600 dark:text-neutral-400 text-xs font-semibold">
@@ -1723,9 +1747,9 @@ export const StockManager = () => {
                         </div>
                       );
                     })}
-                    <div />
                   </div>
                 </div>
+                <br></br>
               </>
             )}
 
@@ -1896,7 +1920,7 @@ export const StockManager = () => {
                         matrix: {
                           ...p.matrix,
                           [tId]: {
-                            ...(p.matrix?.[tId] || { b2b: 0, web: 0}),
+                            ...(p.matrix?.[tId] || { b2b: 0, web: 0 }),
                             [field]: n,
                           },
                         },
@@ -2027,15 +2051,18 @@ export const StockManager = () => {
                                   {total}
                                 </span>
                               </div>
+                              
                             );
                           })}
                         </div>
                       </>
+                    
                     );
                   })()}
                 </div>
               </>
             )}
+            <br></br>
             {/* === IMÁGENES DEL PRODUCTO (MULTI-IMAGEN) === */}
             <div className="border rounded-xl border-neutral-300 dark:border-neutral-700 p-4">
               <label className="block text-sm font-semibold mb-2 text-neutral-700 dark:text-neutral-300">
