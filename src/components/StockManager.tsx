@@ -74,7 +74,6 @@ type EditFamilyState = {
   // precios por canal (misma familia)
   priceb2b: number;
   priceweb: number;
-  priceml: number;
 
   // fallback cuando se crean tallas nuevas
   basePrice: number;
@@ -359,7 +358,6 @@ export const StockManager = () => {
           [tallaObj.id]: {
             b2b: 0,
             web: 0,
-            ml: 0,
             price: prev.basePrice ?? 0,
           },
         },
@@ -397,7 +395,6 @@ export const StockManager = () => {
           [tallaObj.id]: {
             b2b: 0,
             web: 0,
-            ml: 0,
             price: prev.basePrice ?? 0,
           },
         },
@@ -525,7 +522,6 @@ export const StockManager = () => {
         talla_id: p.talla_id ?? null,
         stockb2b: Number(p.stockb2b) || 0,
         stockweb: Number(p.stockweb) || 0,
-        stockml: Number(p.stockml) || 0,
       }));
 
       startTransition(() => {
@@ -789,7 +785,6 @@ export const StockManager = () => {
     // Usamos los precios por canal que YA tienes en la tabla
     const priceb2b = (firstProd as any)?.priceb2b ?? basePrice;
     const priceweb = (firstProd as any)?.priceweb ?? basePrice;
-    const priceml = (firstProd as any)?.priceml ?? basePrice;
 
     // Solo llenamos valores para tallas que existen
     existingCols.forEach((t) => {
@@ -813,7 +808,6 @@ export const StockManager = () => {
       basePrice,
       priceb2b: Number(priceb2b) || 0,
       priceweb: Number(priceweb) || 0,
-      priceml: Number(priceml) || 0,
     });
 
     setIsExistingSKU(true);
@@ -931,7 +925,6 @@ export const StockManager = () => {
           id: number;
           stockb2b: number;
           stockweb: number;
-          stockml: number;
           priceb2b: number;
           priceweb: number;
         }> = [];
@@ -943,7 +936,6 @@ export const StockManager = () => {
           talla_id: number;
           stockb2b: number;
           stockweb: number;
-          stockml: number;
           priceb2b: number;
           priceweb: number;
         }> = [];
@@ -955,8 +947,7 @@ export const StockManager = () => {
 
           const b2b = Math.max(0, Number(v.b2b || 0));
           const web = Math.max(0, Number(v.web || 0));
-          const ml = Math.max(0, Number(v.ml || 0));
-          const total = b2b + web + ml;
+          const total = b2b + web;
 
           if (v.id) {
             // update existente
@@ -964,10 +955,8 @@ export const StockManager = () => {
               id: v.id,
               stockb2b: b2b,
               stockweb: web,
-              stockml: ml,
               priceb2b,
               priceweb,
-              priceml,
             });
           } else if (total > 0) {
             // crear nueva talla
@@ -978,10 +967,8 @@ export const StockManager = () => {
               talla_id: t.id,
               stockb2b: b2b,
               stockweb: web,
-              stockml: ml,
               priceb2b,
               priceweb,
-              priceml,
             });
           }
         }
@@ -1012,10 +999,8 @@ export const StockManager = () => {
                 .update({
                   stockb2b: u.stockb2b,
                   stockweb: u.stockweb,
-                  stockml: u.stockml,
                   priceb2b: u.priceb2b,
                   priceweb: u.priceweb,
-                  priceml: u.priceml,
                   price: u.priceweb, // para Woo usamos Web como base
                 })
                 .eq("id", u.id)
@@ -1040,14 +1025,12 @@ export const StockManager = () => {
         const matrix = editingProduct?.matrix || {};
         const priceb2b = Math.max(0, Number(editingProduct?.priceb2b || 0));
         const priceweb = Math.max(0, Number(editingProduct?.priceweb || 0));
-        const priceml = Math.max(0, Number(editingProduct?.priceml || 0));
 
         const rows = Object.entries(matrix)
           .map(([tId, v]: any) => {
             const b2b = Math.max(0, Number(v?.b2b || 0));
             const web = Math.max(0, Number(v?.web || 0));
-            const ml = Math.max(0, Number(v?.ml || 0));
-            const total = b2b + web + ml;
+            const total = b2b + web;
             if (total === 0) return null;
 
             // 🔥 FORZAR TALLA ÚNICA PARA GORROS Y ACCESORIOS
@@ -1066,10 +1049,8 @@ export const StockManager = () => {
               talla_id: tallaId, // ← AQUÍ VA LA TALLA CORRECTA
               stockb2b: b2b,
               stockweb: web,
-              stockml: ml,
               priceb2b,
               priceweb,
-              priceml,
               price: priceweb,
             };
           })
@@ -1182,7 +1163,7 @@ export const StockManager = () => {
 
   const updateFamilyStock = (
     tId: number,
-    field: "b2b" | "web" | "ml",
+    field: "b2b" | "web",
     value: string
   ) => {
     const n = Number((value || "0").replace(/[^\d]/g, ""));
@@ -1194,7 +1175,6 @@ export const StockManager = () => {
         id: null,
         b2b: 0,
         web: 0,
-        ml: 0,
         price: prev.basePrice ?? 0,
       };
 
@@ -1254,7 +1234,6 @@ export const StockManager = () => {
             id: null,
             b2b: 0,
             web: 0,
-            ml: 0,
             price: prev.basePrice ?? 0,
           },
         },
@@ -1284,7 +1263,6 @@ export const StockManager = () => {
             id: null,
             b2b: 0,
             web: 0,
-            ml: 0,
             price: prev.basePrice ?? 0,
           },
         },
@@ -1396,7 +1374,6 @@ export const StockManager = () => {
                 sku: tempSku,
                 priceb2b: 0,
                 priceweb: 0,
-                priceml: 0,
                 matrix: undefined,
               });
               setProductImages([]);
@@ -1456,8 +1433,7 @@ export const StockManager = () => {
                 (acc, p) =>
                   acc +
                   (p.stockb2b || 0) +
-                  (p.stockweb || 0) +
-                  (p.stockml || 0),
+                  (p.stockweb || 0),
                 0
               );
               const famKey = `${fam.name}-${idx}`;
@@ -1727,21 +1703,6 @@ export const StockManager = () => {
                         }
                       />
                     </div>
-                    <div className="text-center">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-200"
-                        value={editingFamily.priceml ?? 0}
-                        onChange={(e) =>
-                          setEditingFamily((p) =>
-                            p
-                              ? { ...p, priceml: Number(e.target.value || 0) }
-                              : p
-                          )
-                        }
-                      />
-                    </div>
 
                     {/* ===== Total ===== */}
                     <div className="text-right pr-2 text-neutral-600 dark:text-neutral-400 text-xs font-semibold">
@@ -1751,9 +1712,8 @@ export const StockManager = () => {
                       const v = editingFamily.values[t.id] || {
                         b2b: 0,
                         web: 0,
-                        ml: 0,
                       };
-                      const total = v.b2b + v.web + v.ml;
+                      const total = v.b2b + v.web;
                       const cls = getStockStatusClass(total);
                       return (
                         <div key={t.id} className="text-center">
@@ -2058,9 +2018,8 @@ export const StockManager = () => {
                             const v = editingProduct?.matrix?.[t.id] || {
                               b2b: 0,
                               web: 0,
-                              ml: 0,
                             };
-                            const total = v.b2b + v.web + v.ml;
+                            const total = v.b2b + v.web;
                             const cls = getStockStatusClass(total);
                             return (
                               <div key={t.id} className="text-center">
