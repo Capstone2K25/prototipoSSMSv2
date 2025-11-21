@@ -282,7 +282,7 @@ export const StockManager = () => {
 
   // paginación (sobre familias)
   const [page, setPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(10);
+  const [pageSize, setPageSize] = useState<number>(15);
 
   // estados UI
   const [loading, setLoading] = useState(true);
@@ -965,37 +965,40 @@ export const StockManager = () => {
         }> = [];
 
         // recorrer solo tallas visibles (cols)
-        for (const t of editingFamily.cols) {
-          const v = editingFamily.values[t.id];
-          if (!v) continue;
+for (const t of editingFamily.cols) {
+  const v = editingFamily.values[t.id];
 
-          const b2b = Math.max(0, Number(v.b2b || 0));
-          const web = Math.max(0, Number(v.web || 0));
-          const total = b2b + web;
+  // 👇 Protección: si la talla NO tiene values, la saltamos
+  if (!v) continue;
 
-          if (v.id) {
-            // update existente
-            updates.push({
-              id: v.id,
-              stockb2b: b2b,
-              stockweb: web,
-              priceb2b,
-              priceweb,
-            });
-          } else if (total > 0) {
-            // crear nueva talla
-            creates.push({
-              name: editingFamily.name,
-              sku: editingFamily.sku || "",
-              categoria_id: editingFamily.categoria_id ?? null,
-              talla_id: t.id,
-              stockb2b: b2b,
-              stockweb: web,
-              priceb2b,
-              priceweb,
-            });
-          }
-        }
+  const b2b = Math.max(0, Number(v.b2b || 0));
+  const web = Math.max(0, Number(v.web || 0));
+  const total = b2b + web;
+
+  if (v.id) {
+    // update existente
+    updates.push({
+      id: v.id,
+      stockb2b: b2b,
+      stockweb: web,
+      priceb2b,
+      priceweb,
+    });
+  } else {
+    // 👇 CREAR NUEVA TALLA SIEMPRE (sin el total > 0)
+    creates.push({
+      name: editingFamily.name,
+      sku: editingFamily.sku || "",
+      categoria_id: editingFamily.categoria_id ?? null,
+      talla_id: t.id,
+      stockb2b: b2b,
+      stockweb: web,
+      priceb2b,
+      priceweb,
+    });
+  }
+}
+
 
         /* 1) ELIMINAR TALLAS QUITADAS DEL GRID */
         if (idsToDelete.length) {
@@ -1031,6 +1034,29 @@ export const StockManager = () => {
             )
           );
         }
+/* 3) CREAR NUEVAS TALLAS EN EDITAR */
+let createdRows: any[] = [];
+if (creates.length) {
+  const { data, error } = await supabase
+    .from("productos")
+    .insert(
+      creates.map((c) => ({
+        ...c,
+        // usamos el precio web como "price" base (igual que en el update)
+        price: c.priceweb,
+        // si subiste una imagen en este editar, se la dejamos a las nuevas tallas
+        image_filename: uploadedImageName ?? null,
+      }))
+    )
+    .select();
+
+  if (error) {
+    console.error(error);
+    toastAndLog("No se pudieron crear algunas tallas.", "error");
+  } else {
+    createdRows = data ?? [];
+  }
+}
 
         const msg: string[] = [];
         if (updates.length) msg.push(`Actualizadas ${updates.length}`);
@@ -1505,7 +1531,7 @@ export const StockManager = () => {
             onChange={(e) => setPageSize(Number(e.target.value))}
             className="border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 rounded px-2 py-1 text-sm text-neutral-800 dark:text-neutral-200 focus:ring-2 focus:ring-neutral-500 outline-none"
           >
-            {[10, 20, 30, 50, 100].map((n) => (
+            {[15, 24, 33, 42, 51, 60].map((n) => (
               <option key={n} value={n}>
                 {n}
               </option>
