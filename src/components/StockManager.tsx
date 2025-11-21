@@ -89,14 +89,16 @@ const FamCard = ({
   getStockStatusClass,
   formatPrice,
   expandAll,
+  priceB2B,
+  priceWeb,
 }: any) => {
   const [isOpen, setIsOpen] = useState(false);
   const toggle = () => setIsOpen(!isOpen);
 
-  // sincroniza con el estado global
   useEffect(() => {
     setIsOpen(expandAll);
   }, [expandAll]);
+
   const [deleting, setDeleting] = useState(false);
 
   return (
@@ -238,21 +240,22 @@ const FamCard = ({
               </div>
             );
           })}
+
           {/* FILA DE PRECIO */}
-          <div className="grid grid-cols-[1fr,0.7fr,0.7fr,0.7fr] gap-2 items-center py-2 border-t mt-2">
+          <div className="grid grid-cols-[1fr,0.6fr,0.6fr,0.6fr] gap-2 items-center py-2 border-t mt-2">
             <div className="font-semibold text-neutral-900">Precio</div>
 
             {/* PRECIO B2B */}
             <div className="text-center text-[12px] font-bold text-fuchsia-700">
-              {formatPrice(fam.byTalla[cols[0].id]?.priceb2b || 0)}
+              {formatPrice(priceB2B || 0)}
             </div>
 
             {/* PRECIO WEB */}
             <div className="text-center text-[12px] font-bold text-blue-700">
-              {formatPrice(fam.byTalla[cols[0].id]?.priceweb || 0)}
+              {formatPrice(priceWeb || 0)}
             </div>
 
-            {/* TOTAL VACÍO */}
+            {/* Total (vacío) */}
             <div></div>
           </div>
         </div>
@@ -1450,10 +1453,16 @@ export const StockManager = () => {
             {pageFams.map((fam, idx) => {
               const cols = columnsForFam(fam);
               const totalFam = Object.values(fam.byTalla).reduce(
-                (acc, p) => acc + (p.stockb2b || 0) + (p.stockweb || 0),
+                (acc, p: any) => acc + (p.stockb2b || 0) + (p.stockweb || 0),
                 0
               );
+
               const famKey = `${fam.name}-${idx}`;
+
+              // 👇 Tomamos cualquier producto de la familia como referencia
+              const anyProd = Object.values(fam.byTalla)[0] as any;
+              const priceB2B = anyProd?.priceb2b ?? 0;
+              const priceWeb = anyProd?.priceweb ?? 0;
 
               return (
                 <div
@@ -1470,6 +1479,8 @@ export const StockManager = () => {
                     getStockStatusClass={getStockStatusClass}
                     formatPrice={formatPrice}
                     expandAll={expandAll}
+                    priceB2B={priceB2B}
+                    priceWeb={priceWeb}
                   />
                 </div>
               );
@@ -1627,7 +1638,7 @@ export const StockManager = () => {
                     />
                   </div>
                 </div>
-<br></br>
+                <br></br>
                 {/* BOTONES de tallas */}
                 <div className="flex justify-between mb-2">
                   <div className="flex gap-2">
@@ -2051,12 +2062,10 @@ export const StockManager = () => {
                                   {total}
                                 </span>
                               </div>
-                              
                             );
                           })}
                         </div>
                       </>
-                    
                     );
                   })()}
                 </div>
