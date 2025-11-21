@@ -913,11 +913,6 @@ export const StockManager = () => {
           0,
           Number(editingFamily.priceweb || editingFamily.basePrice || 0)
         );
-        const priceml = Math.max(
-          0,
-          Number(editingFamily.priceml || editingFamily.basePrice || 0)
-        );
-
         // productos actuales en BD para esta familia
         const famProducts = products.filter(
           (p) =>
@@ -939,7 +934,6 @@ export const StockManager = () => {
           stockml: number;
           priceb2b: number;
           priceweb: number;
-          priceml: number;
         }> = [];
 
         const creates: Array<{
@@ -952,7 +946,6 @@ export const StockManager = () => {
           stockml: number;
           priceb2b: number;
           priceweb: number;
-          priceml: number;
         }> = [];
 
         // recorrer solo tallas visibles (cols)
@@ -1734,26 +1727,6 @@ export const StockManager = () => {
                         }
                       />
                     </div>
-
-                    {/* ===== ML ===== */}
-                    <div className="text-right pr-2">
-                      <span className="px-2 py-1 rounded bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-200 text-xs font-semibold">
-                        ML
-                      </span>
-                    </div>
-                    {editingFamily.cols.map((t) => (
-                      <div key={t.id} className="text-center">
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-200"
-                          value={editingFamily.values[t.id]?.ml ?? 0}
-                          onChange={(e) =>
-                            updateFamilyStock(t.id, "ml", e.target.value)
-                          }
-                        />
-                      </div>
-                    ))}
                     <div className="text-center">
                       <input
                         type="text"
@@ -1883,7 +1856,6 @@ export const StockManager = () => {
                   {[
                     { key: "priceb2b", label: "Precio B2B" },
                     { key: "priceweb", label: "Precio Web" },
-                    { key: "priceml", label: "Precio ML" },
                   ].map((field) => (
                     <div key={field.key}>
                       <label className="block text-sm text-neutral-700 dark:text-neutral-300 mb-1">
@@ -1955,7 +1927,7 @@ export const StockManager = () => {
 
                     const setVal = (
                       tId: number,
-                      field: "b2b" | "web" | "ml",
+                      field: "b2b" | "web",
                       val: string
                     ) => {
                       const n = Number((val || "0").replace(/[^\d]/g, ""));
@@ -1964,7 +1936,7 @@ export const StockManager = () => {
                         matrix: {
                           ...p.matrix,
                           [tId]: {
-                            ...(p.matrix?.[tId] || { b2b: 0, web: 0, ml: 0 }),
+                            ...(p.matrix?.[tId] || { b2b: 0, web: 0}),
                             [field]: n,
                           },
                         },
@@ -2071,28 +2043,6 @@ export const StockManager = () => {
                                 )}
                                 onChange={(e) =>
                                   setVal(t.id, "web", e.target.value)
-                                }
-                              />
-                            </div>
-                          ))}
-
-                          {/* ML */}
-                          <div className="text-right pr-2">
-                            <span className="px-2 py-1 rounded text-xs font-semibold bg-amber-100 text-amber-700">
-                              ML
-                            </span>
-                          </div>
-                          {visibleCols.map((t) => (
-                            <div key={t.id} className="text-center">
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                className="w-full border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-center bg-white dark:bg-neutral-800 text-neutral-900 dark:text-white"
-                                value={String(
-                                  editingProduct?.matrix?.[t.id]?.ml ?? 0
-                                )}
-                                onChange={(e) =>
-                                  setVal(t.id, "ml", e.target.value)
                                 }
                               />
                             </div>
